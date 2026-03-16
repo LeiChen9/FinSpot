@@ -150,40 +150,51 @@ def plot_fund_analysis(code, days=90, latest_date=datetime.now().strftime('%Y-%m
     start_date = end_date - timedelta(days=days)
     data = data[(data['净值日期'] >= start_date) & (data['净值日期'] <= end_date)].reset_index(drop=True)
     
-    # 创建图表 (4个子图: 净值+均线, RSI(多周期), MACD)
-    fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
+    # 创建图表 (5个子图: 净值+均线, BOLL, RSI(多周期), MACD)
+    fig, axes = plt.subplots(5, 1, figsize=(14, 14), sharex=True)
     fig.suptitle(f'基金 {code} 技术分析 (过去{days}天)', fontsize=16, fontweight='bold')
     
-    # ===== 第一行: 净值走势 + 均线 + 布林带 =====
+    # ===== 第一行: 净值走势 + 均线 =====
     ax0 = axes[0]
-    ax0.plot(data.index, data['单位净值'], label='净值', color='black', linewidth=2.5)
-    ax0.fill_between(data.index, data['BOLL_lower'], data['BOLL_upper'], 
-                      alpha=0.1, color='blue', label='布林带')
-    ax0.plot(data.index, data['BOLL_middle'], label='布林中轨', color='blue', linestyle='--', linewidth=1, alpha=0.6)
+    ax0.plot(data.index, data['单位净值'], label='净值', color='black', linewidth=2.5, zorder=3)
     
-    # 绘制均线
-    colors_ma = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A']
+    # 绘制均线 - 使用对比度更高的颜色
+    colors_ma = ['#FF1744', '#1976D2', '#00C853', '#FFB300', '#D32F2F', '#0097A7']
     for i, period in enumerate(ma_periods):
         if f'MA{period}' in data.columns:
             ax0.plot(data.index, data[f'MA{period}'], label=f'MA{period}', 
-                    color=colors_ma[i % len(colors_ma)], linewidth=1.2, alpha=0.8)
+                    color=colors_ma[i % len(colors_ma)], linewidth=1.5, alpha=0.85, zorder=2)
     
     ax0.set_ylabel('净值', fontsize=11, fontweight='bold')
-    ax0.set_title('基金净值走势 (均线 + 布林带)', fontsize=12)
-    ax0.legend(loc='upper left', fontsize=9, ncol=4)
+    ax0.set_title('基金净值走势 + 移动平均线', fontsize=12, fontweight='bold')
+    ax0.legend(loc='upper left', fontsize=10, ncol=3)
     ax0.grid(True, alpha=0.3)
     
-    # ===== 第二行: RSI (多周期) =====
+    # ===== 第二行: 布林带 =====
     ax1 = axes[1]
+    ax1.plot(data.index, data['单位净值'], label='净值', color='black', linewidth=2.5, zorder=3)
+    ax1.fill_between(data.index, data['BOLL_lower'], data['BOLL_upper'], 
+                      alpha=0.15, color='blue', label='布林带')
+    ax1.plot(data.index, data['BOLL_upper'], label='上轨', color='blue', linestyle='--', linewidth=1.2, alpha=0.7)
+    ax1.plot(data.index, data['BOLL_middle'], label='中轨', color='purple', linestyle='-', linewidth=1.2, alpha=0.7)
+    ax1.plot(data.index, data['BOLL_lower'], label='下轨', color='blue', linestyle='--', linewidth=1.2, alpha=0.7)
+    
+    ax1.set_ylabel('净值', fontsize=11, fontweight='bold')
+    ax1.set_title('基金净值走势 + 布林带 (BOLL)', fontsize=12, fontweight='bold')
+    ax1.legend(loc='upper left', fontsize=10)
+    ax1.grid(True, alpha=0.3)
+    
+    # ===== 第三行: RSI (多周期) =====
+    ax2 = axes[2]
     colors_rsi = ['#E74C3C', '#3498DB', '#2ECC71']
     for i, period in enumerate(rsi_periods):
         if f'RSI{period}' in data.columns:
-            ax1.plot(data.index, data[f'RSI{period}'], label=f'RSI{period}', 
+            ax2.plot(data.index, data[f'RSI{period}'], label=f'RSI{period}', 
                     color=colors_rsi[i % len(colors_rsi)], linewidth=1.5, alpha=0.85)
     
-    ax1.axhline(y=70, color='orange', linestyle='--', alpha=0.5, linewidth=1)
-    ax1.axhline(y=30, color='green', linestyle='--', alpha=0.5, linewidth=1)
-    ax1.fill_between(data.index, 30, 70, alpha=0.08, color='gray')
+    ax2.axhline(y=70, color='orange', linestyle='--', alpha=0.5, linewidth=1)
+    ax2.axhline(y=30, color='green', linestyle='--', alpha=0.5, linewidth=1)
+    ax2.fill_between(data.index, 30, 70, alpha=0.08, color='gray')
     
     # 在图表上显示最新的RSI值
     latest_idx = len(data) - 1
@@ -193,42 +204,42 @@ def plot_fund_analysis(code, days=90, latest_date=datetime.now().strftime('%Y-%m
             rsi_val = data[f'RSI{period}'].iloc[latest_idx]
             if not np.isnan(rsi_val):
                 text_str += f'RSI{period}={rsi_val:.1f}  '
-    ax1.text(0.02, 0.95, text_str, transform=ax1.transAxes, 
+    ax2.text(0.02, 0.95, text_str, transform=ax2.transAxes, 
             fontsize=10, verticalalignment='top', 
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     
-    ax1.set_ylabel('RSI', fontsize=11, fontweight='bold')
-    ax1.set_ylim(0, 100)
-    ax1.set_title('相对强弱指数 (RSI)', fontsize=12)
-    ax1.legend(loc='upper left', fontsize=9)
-    ax1.grid(True, alpha=0.3)
-    
-    # ===== 第三行: MACD =====
-    ax2 = axes[2]
-    # 绘制柱状图 (MACD柱 = DIF - DEA)
-    colors = ['green' if x >= 0 else 'red' for x in data['MACD'].fillna(0)]
-    ax2.bar(data.index, data['MACD'], label='MACD柱', color=colors, alpha=0.3, width=0.8)
-    # 绘制DIFF (快线) 和 DEA (信号线)
-    ax2.plot(data.index, data['DIFF'], label='DIF (快线)', color='blue', linewidth=1.5)
-    ax2.plot(data.index, data['DEA'], label='DEA (信号线)', color='red', linewidth=1.5)
-    ax2.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=0.5)
-    ax2.set_ylabel('MACD', fontsize=11, fontweight='bold')
-    ax2.set_title(f'MACD指标 (DIF={macd_fast}-{macd_slow}, DEA={macd_signal})', fontsize=12)
-    ax2.legend(loc='upper left', fontsize=9)
+    ax2.set_ylabel('RSI', fontsize=11, fontweight='bold')
+    ax2.set_ylim(0, 100)
+    ax2.set_title('相对强弱指数 (RSI)', fontsize=12, fontweight='bold')
+    ax2.legend(loc='upper left', fontsize=10)
     ax2.grid(True, alpha=0.3)
     
-    # ===== 第四行: 保留给其他指标 =====
+    # ===== 第四行: MACD =====
     ax3 = axes[3]
-    ax3.text(0.5, 0.5, '预留空间', ha='center', va='center', fontsize=14, color='gray')
-    ax3.set_visible(False)
+    # 绘制柱状图 (MACD柱 = DIF - DEA)
+    colors = ['green' if x >= 0 else 'red' for x in data['MACD'].fillna(0)]
+    ax3.bar(data.index, data['MACD'], label='MACD柱', color=colors, alpha=0.3, width=0.8)
+    # 绘制DIFF (快线) 和 DEA (信号线)
+    ax3.plot(data.index, data['DIFF'], label='DIF (快线)', color='blue', linewidth=1.5)
+    ax3.plot(data.index, data['DEA'], label='DEA (信号线)', color='red', linewidth=1.5)
+    ax3.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=0.5)
+    ax3.set_ylabel('MACD', fontsize=11, fontweight='bold')
+    ax3.set_title(f'MACD指标 (DIF={macd_fast}-{macd_slow}, DEA={macd_signal})', fontsize=12, fontweight='bold')
+    ax3.legend(loc='upper left', fontsize=10)
+    ax3.grid(True, alpha=0.3)
+    
+    # ===== 第五行: 预留空间 =====
+    ax4 = axes[4]
+    ax4.text(0.5, 0.5, '预留空间', ha='center', va='center', fontsize=14, color='gray')
+    ax4.set_visible(False)
     
     # 调整x轴标签 (每10个数据点显示一个标签)
     step = max(1, len(data) // 10)
     x_ticks = range(0, len(data), step)
     x_labels = [data['净值日期'].iloc[i].strftime('%m-%d') if i < len(data) else '' 
                 for i in x_ticks]
-    ax2.set_xticks(x_ticks)
-    ax2.set_xticklabels(x_labels, rotation=45)
+    ax3.set_xticks(x_ticks)
+    ax3.set_xticklabels(x_labels, rotation=45)
     
     plt.tight_layout()
     
