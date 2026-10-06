@@ -1,6 +1,6 @@
 """策略模型之间共享的数据对象。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import numpy as np
@@ -17,3 +17,13 @@ class PeriodSnapshot:
     forward_ret: pd.Series
     factor_returns: np.ndarray
     residual_var: float
+
+
+@dataclass
+class BacktestResult:
+    """多因子回测的权重、净值和诊断结果。"""
+
+    weights_history: list[dict] = field(default_factory=list)
+    daily_nav: pd.Series = field(default_factory=pd.Series)
+    performance: dict = field(default_factory=dict)
+    debug: dict = field(default_factory=dict)

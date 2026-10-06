@@ -23,7 +23,7 @@ from strategy.fundamental_factors import (
     _compute_ttm_eps, _find_fin_value,
     calc_pe_inv, calc_pb_inv, calc_profit_margin, calc_rev_growth, calc_roe,
 )
-from strategy.model_types import PeriodSnapshot
+from strategy.model_types import BacktestResult, PeriodSnapshot
 
 
 # ─── 工具函数 ───
@@ -190,14 +190,6 @@ class FactorModel:
 
 
 # ─── 回测引擎 ───
-
-@dataclass
-class BacktestResult:
-    weights_history: List[dict] = field(default_factory=list)
-    daily_nav: pd.Series = field(default_factory=pd.Series)
-    performance: dict = field(default_factory=dict)
-    debug: dict = field(default_factory=dict)
-
 
 class MultiFactorBacktest:
     """多因子策略回测引擎"""
