@@ -1,0 +1,26 @@
+# Python and local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Environment and credentials
+.env
+.env.*
+*.pem
+*.key
+credentials.*
+secrets.*
+
+# Local datasets and generated research output
+data/*.csv
+data/*.json
+data/meta/
+data/financial/
+data/dividend/
+reports/generated/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
