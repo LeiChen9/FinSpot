@@ -105,12 +105,9 @@ class FactorModel:
         y = forward_ret.loc[common].values
         X = np.column_stack([np.ones(len(X)), X])
 
-        try:
-            beta = np.linalg.lstsq(X, y, rcond=None)[0]
-            residuals = y - X @ beta
-            return beta[1:], float(np.var(residuals))
-        except np.linalg.LinAlgError:
-            return np.zeros(len(factor_df.columns)), 0.01
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        residuals = y - X @ beta
+        return beta[1:], float(np.var(residuals))
 
     @staticmethod
     def compute_ic_history(warmup: List[PeriodSnapshot], factors: List[str]

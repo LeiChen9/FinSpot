@@ -115,13 +115,10 @@ class DataManager:
     def get_batch_financial_data(self, codes: list,
                                   force_download: bool = False) -> dict:
         """批量获取多只股票财务数据，返回 {code: DataFrame}"""
-        result = {}
-        for code in codes:
-            try:
-                result[code] = self.get_financial_data(code, force_download)
-            except Exception as e:
-                print(f"   [x] {code}: {e}")
-        return result
+        return {
+            code: self.get_financial_data(code, force_download)
+            for code in codes
+        }
 
     # =========================================================================
     # 内部 — 缓存策略 + 多源降级
