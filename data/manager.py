@@ -179,13 +179,16 @@ class DataManager:
         """按优先级依次尝试数据源，返回第一个成功的结果"""
         if source_list is None:
             source_list = self.A_SOURCE_LIST
+        errors = []
         for source in source_list:
             try:
                 df = source(code, start, end)
                 if df is not None and not df.empty:
                     return df
-            except Exception:
-                continue
+            except Exception as exc:
+                errors.append(f"{source.__module__}.{source.__name__}: {exc}")
+        if errors:
+            raise RuntimeError(f"all market data sources failed for {code}: {'; '.join(errors)}")
         return None
 
     # =========================================================================

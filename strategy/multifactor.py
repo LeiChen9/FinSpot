@@ -255,13 +255,10 @@ class FactorModel:
                 fin = self.fin_loader.get_latest_financial(stock, as_of)
             vals = {}
             for fname, fn in self.calcs.items():
-                try:
-                    v = fn(close, as_of, financial_data=fin,
-                           fin_loader=self.fin_loader, stock=stock)
-                    if v is not None and np.isfinite(v):
-                        vals[fname] = v
-                except Exception:
-                    pass
+                v = fn(close, as_of, financial_data=fin,
+                       fin_loader=self.fin_loader, stock=stock)
+                if v is not None and np.isfinite(v):
+                    vals[fname] = v
             if len(vals) >= 3:
                 rows[stock] = vals
         df = pd.DataFrame.from_dict(rows, orient='index')

@@ -161,21 +161,18 @@ class DoubleBottomStrategy:
         for code, df in market_data.items():
             if len(df) < 30:
                 continue
-            try:
-                patterns = detect_double_bottom(
-                    df['close'].values,
-                    pivot_left=self.pivot_left,
-                    pivot_right=self.pivot_right,
-                    bottom_tolerance=self.bottom_tolerance,
-                    min_rebound=self.min_rebound,
-                    min_separation=self.min_separation,
-                    max_separation=self.max_separation,
-                    breakout_buffer=self.breakout_buffer,
-                )
-                if not patterns.empty:
-                    self._signals[code] = patterns
-            except Exception as e:
-                print(f"生成 {code} 双底信号失败: {e}")
+            patterns = detect_double_bottom(
+                df['close'].values,
+                pivot_left=self.pivot_left,
+                pivot_right=self.pivot_right,
+                bottom_tolerance=self.bottom_tolerance,
+                min_rebound=self.min_rebound,
+                min_separation=self.min_separation,
+                max_separation=self.max_separation,
+                breakout_buffer=self.breakout_buffer,
+            )
+            if not patterns.empty:
+                self._signals[code] = patterns
 
     def _calculate_position_size(self, price: float, current_nav: float) -> int:
         """计算买入股数（100股整数倍）"""
