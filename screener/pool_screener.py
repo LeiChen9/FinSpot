@@ -14,14 +14,12 @@ Point-in-time 惯例 (与 screener/graham.py 及 scripts/graham_dodd_lib.py 一�
   - MA120 / 波动率基于前复权价
 """
 from typing import Callable, Dict, List, Optional, Tuple
-import os
 
 import numpy as np
 import pandas as pd
-
-DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
-FIN_DIR = os.path.join(DATA_DIR, 'financial')
-DIV_DIR = os.path.join(DATA_DIR, 'dividend')
+from data.pool import (
+    load_balance, load_dividend, load_fin_summary, load_profit, load_qfq, load_raw,
+)
 
 # ── 股票池 (28 只 A 股; 远东宏信/巨子生物为港股, 无本地数据, 剔除) ──
 POOL: Dict[str, str] = {
@@ -40,82 +38,8 @@ POOL: Dict[str, str] = {
     '301004': '嘉益股份',
 }
 
-_QFQ_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-_RAW_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-_PROF_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-_BAL_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-_FIN_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-_DIV_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-
 # 预计算信号序列缓存 (按日索引, 避免回测中逐日重算)
 _SIGNAL_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
-
-
-def load_qfq(code: str) -> Optional[pd.DataFrame]:
-    if code not in _QFQ_CACHE:
-        p = os.path.join(DATA_DIR, f'{code}_qfq.csv')
-        if not os.path.exists(p):
-            p = os.path.join(DATA_DIR, f'{code}_market.csv')  # 688036 已复权
-        _QFQ_CACHE[code] = (
-            pd.read_csv(p, index_col='date', parse_dates=True).sort_index()
-            if os.path.exists(p) else None
-        )
-        if _QFQ_CACHE[code] is not None:
-            _QFQ_CACHE[code] = _QFQ_CACHE[code][~_QFQ_CACHE[code].index.duplicated(keep='last')]
-    return _QFQ_CACHE[code]
-
-
-def load_raw(code: str) -> Optional[pd.DataFrame]:
-    if code not in _RAW_CACHE:
-        p = os.path.join(DATA_DIR, f'{code}_market.csv')
-        _RAW_CACHE[code] = (
-            pd.read_csv(p, index_col='date', parse_dates=True).sort_index()
-            if os.path.exists(p) else None
-        )
-        if _RAW_CACHE[code] is not None:
-            _RAW_CACHE[code] = _RAW_CACHE[code][~_RAW_CACHE[code].index.duplicated(keep='last')]
-    return _RAW_CACHE[code]
-
-
-def load_profit(code: str) -> Optional[pd.DataFrame]:
-    if code not in _PROF_CACHE:
-        p = os.path.join(FIN_DIR, f'{code}_profit.csv')
-        if not os.path.exists(p):
-            _PROF_CACHE[code] = None
-        else:
-            df = pd.read_csv(p, dtype={'报告日': str, '公告日期': str})
-            df['报告日'] = pd.to_datetime(df['报告日'], errors='coerce')
-            df['公告日期'] = pd.to_datetime(df['公告日期'], errors='coerce')
-            _PROF_CACHE[code] = df.dropna(subset=['报告日']).sort_values('报告日')
-    return _PROF_CACHE[code]
-
-
-def load_balance(code: str) -> Optional[pd.DataFrame]:
-    if code not in _BAL_CACHE:
-        p = os.path.join(FIN_DIR, f'{code}_balance.csv')
-        if not os.path.exists(p):
-            _BAL_CACHE[code] = None
-        else:
-            df = pd.read_csv(p, dtype={'报告日': str, '公告日期': str})
-            df['报告日'] = pd.to_datetime(df['报告日'], errors='coerce')
-            df['公告日期'] = pd.to_datetime(df['公告日期'], errors='coerce')
-            _BAL_CACHE[code] = df.dropna(subset=['报告日']).sort_values('报告日')
-    return _BAL_CACHE[code]
-
-
-def load_fin_summary(code: str) -> Optional[pd.DataFrame]:
-    """同花顺财务摘要 (指标 × 报告期), 仅用于缺 profit/balance 的标的 PE 兜底"""
-    if code not in _FIN_CACHE:
-        p = os.path.join(FIN_DIR, f'{code}_fin.csv')
-        _FIN_CACHE[code] = pd.read_csv(p) if os.path.exists(p) else None
-    return _FIN_CACHE[code]
-
-
-def load_dividend(code: str) -> Optional[pd.DataFrame]:
-    if code not in _DIV_CACHE:
-        p = os.path.join(DIV_DIR, f'{code}_dividend.csv')
-        _DIV_CACHE[code] = pd.read_csv(p) if os.path.exists(p) else None
-    return _DIV_CACHE[code]
 
 
 # ── 收盘价 (不复权, 仅 D 日有成交时返回) ──
