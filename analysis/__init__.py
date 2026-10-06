@@ -2,6 +2,7 @@ from analysis.performance import (
     annualize_return, annualize_vol, max_drawdown,
     calc_sharpe, calc_sortino, calc_calmar, win_rate,
     performance_summary,
+    nav_summary,
 )
 from analysis.attribution import (
     calc_beta, calc_alpha, tracking_error, information_ratio,

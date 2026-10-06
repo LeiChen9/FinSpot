@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finspot"
+version = "0.1.0"
+description = "Research and backtesting tools for Chinese markets"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+data = ["akshare>=1.12", "baostock>=0.8"]
+dev = ["pytest>=7", "ruff>=0.5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.setuptools]
+packages = ["analysis", "applications", "core", "data", "data.sources", "indicators", "screener", "strategy", "visualization"]

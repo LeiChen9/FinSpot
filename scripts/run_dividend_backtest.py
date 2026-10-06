@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from screener.graham import GrahamScreener
+from applications.backtests import benchmark_nav
 from data.local import load_market_frames
 from strategy.mean_reversion import (
     MeanReversionBacktest,
@@ -46,12 +47,6 @@ def make_screener(mkt, uni_codes, use_lowvol=True, require_div=True):
             return []
         return vols[vols <= vols.quantile(0.5)].index.tolist()
     return sc
-
-
-def bench_nav(mkt, code, start=START, end=END):
-    df = mkt[code]
-    df = df[(df.index >= start) & (df.index <= end)]
-    return df['close'] / df['close'].iloc[0]
 
 
 def main():
@@ -95,7 +90,7 @@ def main():
 
     for code, label in BENCH.items():
         try:
-            navs[label] = bench_nav(mkt, code, start=START, end=end)
+            navs[label] = benchmark_nav(mkt, code, start=START, end=end)
         except Exception as e:
             print(f'  [x] 基准 {code}: {e}')
 

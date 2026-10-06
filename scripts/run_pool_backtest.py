@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from screener.pool_screener import POOL, build_pool_screener, load_qfq, load_raw
+from applications.backtests import benchmark_nav
 from strategy.band_backtest import BandBacktest
 from strategy.multifactor import perf_summary
 
@@ -25,12 +26,6 @@ END = pd.Timestamp('2026-07-31')
 
 def make_screener(div_min=0.03, pe_max=20.0, dev_buy=-0.12):
     return build_pool_screener(div_min=div_min, pe_max=pe_max, dev_buy=dev_buy)
-
-
-def bench_nav(mkt, code, start=START, end=END):
-    df = mkt[code]
-    df = df[(df.index >= start) & (df.index <= end)]
-    return df['close'] / df['close'].iloc[0]
 
 
 def main():
@@ -61,7 +56,7 @@ def main():
 
     for code, label in bench.items():
         try:
-            navs[label] = bench_nav(mkt, code, start=START, end=end)
+            navs[label] = benchmark_nav(mkt, code, start=START, end=end)
         except Exception as e:
             print(f'  [x] 基准 {code}: {e}')
 

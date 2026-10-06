@@ -81,3 +81,24 @@ def performance_summary(daily_returns, price_series=None, rf_annual: float = 0.0
         'cumulative_return': cum_ret,
         'rf_used': rf_annual,
     }
+
+
+def nav_summary(nav: pd.Series, rf_annual: float = 0.02) -> dict:
+    """Return formatted performance metrics for a normalized NAV series."""
+    if len(nav) < 2:
+        return {}
+    returns = nav.pct_change().dropna()
+    years = max((nav.index[-1] - nav.index[0]).days / 365.25, 1 / 365.25)
+    annual_return = nav.iloc[-1] ** (1 / years) - 1
+    annual_vol = annualize_vol(returns)
+    drawdown = max_drawdown(nav)
+    return {
+        'total_return': f"{nav.iloc[-1] - 1:.2%}",
+        'annual_return': f"{annual_return:.2%}",
+        'annual_vol': f"{annual_vol:.2%}",
+        'sharpe': f"{(annual_return - rf_annual) / annual_vol:.2f}" if annual_vol else "0.00",
+        'calmar': f"{(annual_return - rf_annual) / abs(drawdown):.2f}" if drawdown else "0.00",
+        'max_drawdown': f"{drawdown:.2%}",
+        'win_rate': f"{(returns > 0).mean():.2%}",
+        'n_trading_days': len(returns),
+    }

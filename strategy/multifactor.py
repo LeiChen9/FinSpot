@@ -13,6 +13,8 @@ from datetime import datetime
 from dataclasses import dataclass, field
 import os
 
+from analysis.performance import nav_summary
+
 
 # ─── 工具函数 ───
 
@@ -667,33 +669,4 @@ class MultiFactorBacktest:
 # ─── 绩效评估 ───
 
 def perf_summary(nav: pd.Series, rf_annual: float = 0.02) -> dict:
-    if len(nav) < 2:
-        return {}
-    daily_ret = nav.pct_change().dropna()
-    if len(daily_ret) < 2:
-        return {}
-    total_days = (nav.index[-1] - nav.index[0]).days
-    years = max(total_days / 365.25, 1 / 365.25)
-
-    ann_ret = nav.iloc[-1] ** (1 / years) - 1
-    ann_vol = daily_ret.std() * np.sqrt(252)
-    sharpe = (ann_ret - rf_annual) / ann_vol if ann_vol > 0 else 0.0
-
-    roll_max = nav.expanding().max()
-    dd = nav / roll_max - 1
-    max_dd = dd.min()
-    calmar = (ann_ret - rf_annual) / abs(max_dd) if max_dd != 0 else 0.0
-    win_rate = (daily_ret > 0).mean()
-
-    n_trading = len(daily_ret)
-
-    return {
-        'total_return': f"{nav.iloc[-1] - 1:.2%}",
-        'annual_return': f"{ann_ret:.2%}",
-        'annual_vol': f"{ann_vol:.2%}",
-        'sharpe': f"{sharpe:.2f}",
-        'calmar': f"{calmar:.2f}",
-        'max_drawdown': f"{max_dd:.2%}",
-        'win_rate': f"{win_rate:.2%}",
-        'n_trading_days': n_trading,
-    }
+    return nav_summary(nav, rf_annual)

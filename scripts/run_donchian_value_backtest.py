@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pandas as pd
 
 from analysis.performance import performance_summary
+from applications.backtests import benchmark_nav
 from data.local import load_market_frames
 from screener.dividend_value import build_value_screener
 from strategy.donchian_value_strategy import DonchianValueStrategy
@@ -45,14 +46,6 @@ def pool_union_codes(screener, data_dir=DATA_DIR, start=START) -> set:
     return union
 
 
-def bench_nav(mkt, code, end):
-    df = mkt[code]
-    df = df[(df.index >= START) & (df.index <= end)]
-    if df.empty:
-        return None
-    return df['close'] / df['close'].iloc[0]
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--demo', action='store_true')
@@ -76,7 +69,7 @@ def main():
     navs = {'高息价值×唐奇安(含成本)': nav / nav.iloc[0]}
     for code, label in BENCH.items():
         try:
-            b = bench_nav(mkt, code, end)
+            b = benchmark_nav(mkt, code, START, end)
             if b is not None:
                 navs[label] = b
             else:
