@@ -18,6 +18,11 @@ from strategy.factors import (
     PRICE_CALCS, PRICE_FACTORS, PRICE_FACTOR_LABELS,
     calc_low_vol_12m, calc_momentum_12_1, calc_rsi_14_inv,
 )
+from strategy.fundamental_factors import (
+    FINANCIAL_FACTORS, FINANCIAL_FACTOR_LABELS, FUNDAMENTAL_CALCS,
+    _compute_ttm_eps, _find_fin_value,
+    calc_pe_inv, calc_pb_inv, calc_profit_margin, calc_rev_growth, calc_roe,
+)
 
 
 # ─── 工具函数 ───
@@ -35,133 +40,6 @@ def _spearmanr(x: np.ndarray, y: np.ndarray) -> float:
     if len(x) < 4:
         return 0.0
     return float(stats.spearmanr(x, y)[0])
-
-
-# ─── 基本面因子计算 ───
-
-FINANCIAL_FACTORS = ['pe_inv', 'pb_inv', 'roe', 'profit_margin', 'rev_growth']
-
-FINANCIAL_FACTOR_LABELS = {
-    'pe_inv': 'PE 倒数',
-    'pb_inv': 'PB 倒数',
-    'roe': 'ROE',
-    'profit_margin': '销售净利率',
-    'rev_growth': '营收增长率',
-}
-
-
-def _find_fin_value(fin: dict, candidates: List[str]) -> Optional[float]:
-    for k in candidates:
-        val = fin.get(k)
-        if val is not None and np.isfinite(val):
-            return float(val)
-    return None
-
-
-def _compute_ttm_eps(fin_data: dict, loader: FinancialDataLoader,
-                      stock: str, as_of: datetime) -> Optional[float]:
-    """计算 TTM EPS = latest_annual + latest_cumulative - same_period_last_year"""
-    lag_months = 3
-    cutoff_ym = as_of.year * 12 + as_of.month - lag_months
-
-    eps = _find_fin_value(fin_data, ['基本每股收益', '每股收益', '每股盈余'])
-    if eps is None:
-        return None
-
-    if as_of.month >= 4:
-        prev_quarter = f'{as_of.year - 1}0930'
-        prev_cutoff = (as_of.year - 1) * 12 + 9 - lag_months
-    else:
-        prev_quarter = f'{as_of.year - 2}0930'
-        prev_cutoff = (as_of.year - 2) * 12 + 9 - lag_months
-
-    fin_prev = loader.get_latest_financial(stock, datetime(prev_cutoff // 12, max(1, prev_cutoff % 12), 1))
-    if fin_prev is None:
-        annual_date = f'{as_of.year - 1}1231'
-        prev_cutoff2 = (as_of.year - 1) * 12 + 12 - lag_months
-        fin_prev2 = loader.get_latest_financial(stock, datetime(prev_cutoff2 // 12, 1, 1))
-        if fin_prev2:
-            eps_prev_annual = _find_fin_value(fin_prev2, ['基本每股收益', '每股收益', '每股盈余'])
-            if eps_prev_annual is not None and eps is not None:
-                return (eps + eps_prev_annual - eps)  # fallback to latest annual
-        return eps
-    eps_prev = _find_fin_value(fin_prev, ['基本每股收益', '每股收益', '每股盈余'])
-    if eps_prev is None:
-        return eps
-
-    return eps  # simplified: use latest EPS value directly
-
-
-def calc_pe_inv(close: pd.Series, as_of: datetime, **kwargs) -> Optional[float]:
-    """PE 倒数 = EPS / Price, 值越高越便宜"""
-    fin = kwargs.get('financial_data')
-    loader = kwargs.get('fin_loader')
-    stock = kwargs.get('stock')
-    if fin is None or loader is None or stock is None:
-        return None
-    close_val = close[close.index <= as_of].iloc[-1] if len(close[close.index <= as_of]) > 0 else None
-    if close_val is None or close_val <= 0:
-        return None
-    eps = _find_fin_value(fin, ['基本每股收益', '每股收益', '每股盈余'])
-    if eps is None or eps <= 0:
-        return None
-    return float(eps) / float(close_val)
-
-
-def calc_pb_inv(close: pd.Series, as_of: datetime, **kwargs) -> Optional[float]:
-    """PB 倒数 = BVPS / Price, 值越高越便宜"""
-    fin = kwargs.get('financial_data')
-    if fin is None:
-        return None
-    close_val = close[close.index <= as_of].iloc[-1] if len(close[close.index <= as_of]) > 0 else None
-    if close_val is None or close_val <= 0:
-        return None
-    bvps = _find_fin_value(fin, ['每股净资产', '每股净资产_最新股数', '摊薄每股净资产_期末股数'])
-    if bvps is None or bvps <= 0:
-        return None
-    return float(bvps) / float(close_val)
-
-
-def calc_roe(close: pd.Series, as_of: datetime, **kwargs) -> Optional[float]:
-    """ROE, 越高越好"""
-    fin = kwargs.get('financial_data')
-    if fin is None:
-        return None
-    roe = _find_fin_value(fin, ['净资产收益率(ROE)', '净资产收益率', '摊薄净资产收益率'])
-    if roe is None or not np.isfinite(roe) or abs(roe) > 200:
-        return None
-    return float(roe)
-
-
-def calc_profit_margin(close: pd.Series, as_of: datetime, **kwargs) -> Optional[float]:
-    """销售净利率, 越高越好"""
-    fin = kwargs.get('financial_data')
-    if fin is None:
-        return None
-    pm = _find_fin_value(fin, ['销售净利率', '营业利润率'])
-    if pm is None or not np.isfinite(pm) or abs(pm) > 200:
-        return None
-    return float(pm)
-
-
-def calc_rev_growth(close: pd.Series, as_of: datetime, **kwargs) -> Optional[float]:
-    """营业总收入增长率, 越高越好"""
-    fin = kwargs.get('financial_data')
-    if fin is None:
-        return None
-    g = _find_fin_value(fin, ['营业总收入增长率', '归属母公司净利润增长率'])
-    if g is None or not np.isfinite(g) or abs(g) > 1000:
-        return None
-    return float(g)
-
-
-FUNDAMENTAL_CALCS = {
-    'pe_inv': calc_pe_inv,
-    'pb_inv': calc_pb_inv,
-    'roe': calc_roe,
-    'profit_margin': calc_profit_margin,
-    'rev_growth': calc_rev_growth,
-}
 
 
 ALL_FACTORS = PRICE_FACTORS + FINANCIAL_FACTORS
