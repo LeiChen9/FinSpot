@@ -24,6 +24,7 @@ from strategy.fundamental_factors import (
     calc_pe_inv, calc_pb_inv, calc_profit_margin, calc_rev_growth, calc_roe,
 )
 from strategy.model_types import BacktestResult, PeriodSnapshot
+from strategy.factor_model import FactorModel as CanonicalFactorModel
 
 
 # ─── 工具函数 ───
@@ -49,7 +50,7 @@ ALL_LABELS = {**PRICE_FACTOR_LABELS, **FINANCIAL_FACTOR_LABELS}
 
 # ─── 因子模型 ───
 
-class FactorModel:
+class _LegacyFactorModel:
     """多因子模型: 因子计算 + IC/IR + 信号合成 + Rank 打分加权"""
 
     def __init__(self, factors: List[str] = None, fin_loader: FinancialDataLoader = None):
@@ -188,6 +189,9 @@ class FactorModel:
 
 # ─── 回测引擎 ───
 
+# Compatibility export; the implementation lives in strategy.factor_model.
+FactorModel = CanonicalFactorModel
+
 class MultiFactorBacktest:
     """多因子策略回测引擎"""
 
@@ -195,7 +199,7 @@ class MultiFactorBacktest:
                  lambda_risk: float = 8.0, warmup_periods: int = 8,
                  fin_loader: FinancialDataLoader = None):
         self.fin_loader = fin_loader
-        self.factor_model = FactorModel(factors, fin_loader=fin_loader)
+        self.factor_model = CanonicalFactorModel(factors, fin_loader=fin_loader)
         self.stocks = stocks
         self.lambda_risk = lambda_risk
         self.warmup_periods = warmup_periods
