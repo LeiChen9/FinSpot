@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple, Callable
 from datetime import datetime
 from dataclasses import dataclass, field
 from analysis.performance import nav_summary
+from analysis.optimization import mean_variance_optimize
 from data.financial import FinancialDataLoader
 
 
@@ -367,41 +368,6 @@ class FactorModel:
         avg_resid = np.mean(resid_vars) if resid_vars else 0.02 ** 2
 
         return B @ Sigma_f @ B.T + np.eye(n) * max(avg_resid, 1e-8)
-
-
-# ─── 组合优化 ───
-
-def mean_variance_optimize(mu: np.ndarray, sigma: np.ndarray,
-                           lambda_risk: float = 8.0) -> np.ndarray:
-    """均值方差: max w'μ - 0.5*λ*w'Σw, s.t. sum(w)=1, w>=0, max 30%"""
-    n = len(mu)
-    if n == 0:
-        return np.array([])
-
-    if np.all(np.abs(mu) < 1e-10):
-        return np.ones(n) / n
-
-    def obj(w):
-        return -(w @ mu - 0.5 * lambda_risk * w @ sigma @ w)
-
-    w0 = np.ones(n) / n
-    cons = [{'type': 'eq', 'fun': lambda w: w.sum() - 1.0}]
-    bounds = [(0.0, 0.3)] * n
-
-    for _ in range(5):
-        try:
-            res = minimize(obj, w0 + np.random.randn(n) * 0.01,
-                           method='SLSQP', bounds=bounds,
-                           constraints=cons,
-                           options={'maxiter': 1000, 'ftol': 1e-14})
-            if res.success and np.all(np.isfinite(res.x)):
-                w = res.x.copy()
-                w[w < 1e-6] = 0.0
-                if w.sum() > 0:
-                    return w / w.sum()
-        except Exception:
-            pass
-    return np.ones(n) / n
 
 
 # ─── 回测引擎 ───

@@ -18,6 +18,7 @@ from analysis.holding import (
 )
 from analysis.optimization import (
     efficient_frontier, max_sharpe_portfolio, min_vol_portfolio,
+    mean_variance_optimize,
 )
 from analysis.backtest import (
     first_trading_day, scheduled_rebalance_dates, fixed_weight_history,
