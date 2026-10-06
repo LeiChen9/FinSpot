@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from analysis.performance import nav_summary
 from analysis.optimization import mean_variance_optimize
 from data.financial import FinancialDataLoader
+from strategy.factors import (
+    PRICE_CALCS, PRICE_FACTORS, PRICE_FACTOR_LABELS,
+    calc_low_vol_12m, calc_momentum_12_1, calc_rsi_14_inv,
+)
 
 
 # ─── 工具函数 ───
@@ -159,59 +163,6 @@ FUNDAMENTAL_CALCS = {
     'rev_growth': calc_rev_growth,
 }
 
-
-# ─── 价格因子计算 ───
-
-PRICE_FACTORS = ['momentum_12_1', 'low_vol_12m', 'rsi_14_inv']
-
-PRICE_FACTOR_LABELS = {
-    'momentum_12_1': '动量 (12-1月)',
-    'low_vol_12m': '低波 (12月)',
-    'rsi_14_inv': 'RSI 反转 (14日)',
-}
-
-
-def calc_momentum_12_1(close: pd.Series, as_of: datetime, **kwargs) -> float | None:
-    data = close[close.index <= as_of]
-    if len(data) < 273:
-        return None
-    return data.iloc[-22] / data.iloc[-273] - 1
-
-
-def calc_low_vol_12m(close: pd.Series, as_of: datetime, **kwargs) -> float | None:
-    data = close[close.index <= as_of]
-    if len(data) < 252:
-        return None
-    ret = data.pct_change().dropna().iloc[-252:]
-    vol = ret.std()
-    return -vol if vol > 0 else None
-
-
-def calc_rsi_14_inv(close: pd.Series, as_of: datetime, **kwargs) -> float | None:
-    data = close[close.index <= as_of]
-    if len(data) < 16:
-        return None
-    p = data.iloc[-15:].values
-    gains = losses = 0.0
-    for i in range(1, len(p)):
-        diff = p[i] - p[i - 1]
-        gains += max(diff, 0)
-        losses += max(-diff, 0)
-    avg_g = gains / 14
-    avg_l = losses / 14
-    rsi = 50.0
-    if avg_l > 0:
-        rsi = 100 - 100 / (1 + avg_g / avg_l)
-    elif avg_g > 0:
-        rsi = 100.0
-    return -rsi
-
-
-PRICE_CALCS = {
-    'momentum_12_1': calc_momentum_12_1,
-    'low_vol_12m': calc_low_vol_12m,
-    'rsi_14_inv': calc_rsi_14_inv,
-}
 
 ALL_FACTORS = PRICE_FACTORS + FINANCIAL_FACTORS
 ALL_LABELS = {**PRICE_FACTOR_LABELS, **FINANCIAL_FACTOR_LABELS}
