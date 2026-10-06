@@ -23,6 +23,7 @@ from strategy.fundamental_factors import (
     _compute_ttm_eps, _find_fin_value,
     calc_pe_inv, calc_pb_inv, calc_profit_margin, calc_rev_growth, calc_roe,
 )
+from strategy.model_types import PeriodSnapshot
 
 
 # ─── 工具函数 ───
@@ -47,17 +48,6 @@ ALL_LABELS = {**PRICE_FACTOR_LABELS, **FINANCIAL_FACTOR_LABELS}
 
 
 # ─── 因子模型 ───
-
-@dataclass
-class PeriodSnapshot:
-    """单个调仓时点的数据快照"""
-    date: datetime
-    stocks: List[str]                     # 当期有数据的股票
-    factor_df: pd.DataFrame               # index=stock, columns=factor, values=zscore
-    forward_ret: pd.Series                # index=stock, forward return to next period
-    factor_returns: np.ndarray            # [K] 因子收益率 (from OLS)
-    residual_var: float                   # average residual variance
-
 
 class FactorModel:
     """多因子模型: 因子计算 + IC/IR + 信号合成 + Rank 打分加权"""
