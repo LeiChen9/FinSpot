@@ -16,11 +16,23 @@
   - 全部A股为资产池; D 无成交价 → 判不可交易
 """
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from data.graham import (
+    load_10y as _load_10y,
+    load_all_a_pe as _load_all_a_pe,
+    load_balance as _load_balance,
+    load_dividend as _load_dividend,
+    load_index as _load_index,
+    load_market as _load_market,
+    load_profit as _load_profit,
+    load_universe as _load_universe,
+)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -178,6 +190,17 @@ def load_index(code: str) -> Optional[pd.DataFrame]:
         df = pd.read_csv(p, index_col='date', parse_dates=True).sort_index()
         return df
     return _cached(f'idx_{code}', _f)
+
+
+# Compatibility exports. The canonical cache implementation lives in data.graham.
+load_universe = _load_universe
+load_balance = _load_balance
+load_profit = _load_profit
+load_dividend = _load_dividend
+load_market = _load_market
+load_10y = _load_10y
+load_all_a_pe = _load_all_a_pe
+load_index = _load_index
 
 
 # ─────────────────────────────────────────────────────────────
