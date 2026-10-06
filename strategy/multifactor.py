@@ -11,9 +11,8 @@ from scipy import stats
 from typing import Dict, List, Optional, Tuple, Callable
 from datetime import datetime
 from dataclasses import dataclass, field
-import os
-
 from analysis.performance import nav_summary
+from data.financial import FinancialDataLoader
 
 
 # ─── 工具函数 ───
@@ -31,57 +30,6 @@ def _spearmanr(x: np.ndarray, y: np.ndarray) -> float:
     if len(x) < 4:
         return 0.0
     return float(stats.spearmanr(x, y)[0])
-
-
-# ─── 财务数据加载 ───
-
-class FinancialDataLoader:
-    """加载并缓存个股财务数据"""
-
-    QUARTER_MONTHS = {3, 6, 9, 12}
-
-    def __init__(self, fin_dir: str = 'data/financial'):
-        self.fin_dir = fin_dir
-        self._cache: Dict[str, pd.DataFrame] = {}
-
-    def get_latest_financial(self, stock: str, as_of: datetime) -> Optional[dict]:
-        if stock not in self._cache:
-            path = os.path.join(self.fin_dir, f'{stock}_fin.csv')
-            if not os.path.exists(path):
-                return None
-            raw = pd.read_csv(path)
-            if raw.empty:
-                return None
-            raw = raw[raw['指标'].notna()]
-            transposed = {}
-            for _, row in raw.iterrows():
-                indicator = str(row['指标']).strip()
-                for col in raw.columns[2:]:
-                    if col not in transposed:
-                        transposed[col] = {}
-                    try:
-                        val = pd.to_numeric(row[col], errors='coerce')
-                        if not np.isnan(val):
-                            transposed[col][indicator] = val
-                    except:
-                        pass
-            self._cache[stock] = transposed
-        transposed = self._cache.get(stock)
-        if transposed is None:
-            return None
-
-        available_dates = sorted([d for d in transposed.keys() if d[:4].isdigit()])
-        if not available_dates:
-            return None
-
-        lag_months = 3
-        cutoff_ym = as_of.year * 12 + as_of.month - lag_months
-        valid = [d for d in available_dates
-                 if (int(d[:4]) * 12 + int(d[4:6])) <= cutoff_ym]
-        if not valid:
-            return None
-        latest = valid[-1]
-        return transposed[latest]
 
 
 # ─── 基本面因子计算 ───
