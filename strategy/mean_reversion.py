@@ -18,56 +18,14 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-MA_WINDOW = 120
-MA_VOL_LOOKBACK = 500          # MA120 波动回看 (交易日)
+from strategy.mean_reversion_rules import (
+    MA_WINDOW, MA_VOL_LOOKBACK, make_rebalance_dates, ma120_lowvol_mask,
+    rolling_ma120_vol, target_weight,
+)
+from strategy.trading_costs import COMMISSION, SLIPPAGE, STAMP_TAX
+
 MA_VOL_KEEP = 0.5              # 取低波动前 50%
 LOT = 100
-COMMISSION = 0.0003            # 双边
-STAMP_TAX = 0.0005             # 卖出
-SLIPPAGE = 0.0005              # 双边
-
-
-def target_weight(dev: float, cap: float = 0.10,
-                  buy_full: float = 0.10, sell_zero: float = 0.08) -> float:
-    """偏离度 → 单股目标权重"""
-    if dev <= -buy_full:
-        return cap
-    if dev < 0:
-        return cap * (-dev) / buy_full
-    if dev < sell_zero:
-        return cap * (1.0 - dev / sell_zero)
-    return 0.0
-
-
-def ma120_lowvol_mask(df: pd.DataFrame, as_of: pd.Timestamp,
-                      lookback: int = MA_VOL_LOOKBACK) -> Optional[float]:
-    """MA120 序列在 as_of 回看 lookback 交易日内的日变化年化波动率"""
-    hist = df[df.index <= as_of].tail(lookback + MA_WINDOW)
-    if len(hist) < MA_WINDOW + 60:
-        return None
-    ma = hist['close'].rolling(MA_WINDOW).mean().dropna()
-    if len(ma) < 60:
-        return None
-    vol = ma.pct_change().dropna().std() * np.sqrt(252)
-    return vol
-
-
-def rolling_ma120_vol(stocks: Dict[str, pd.DataFrame],
-                      as_of: pd.Timestamp) -> pd.Series:
-    """池内各股 MA120 波动率"""
-    out = {}
-    for code, df in stocks.items():
-        v = ma120_lowvol_mask(df, as_of)
-        if v is not None and np.isfinite(v) and v > 0:
-            out[code] = v
-    return pd.Series(out)
-
-
-def make_rebalance_dates(trading_days: List, start: pd.Timestamp,
-                         end: pd.Timestamp, step: int = 15) -> List[pd.Timestamp]:
-    """每 step 个交易日取一个调仓日 (首个在 start 之后)"""
-    days = [d for d in trading_days if start <= d <= end]
-    return [days[i] for i in range(0, len(days), step)]
 
 
 @dataclass

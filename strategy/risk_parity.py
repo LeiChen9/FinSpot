@@ -9,6 +9,7 @@ from typing import Dict, List, Callable, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass, field
 from strategy.risk_parity_math import calc_erc_weights
+from strategy.portfolio_nav import build_nav_from_weights as _build_nav_from_weights
 
 
 @dataclass
@@ -88,11 +89,11 @@ class RiskParityBacktest:
         return result
 
     def _build_daily_nav(self, weights_history: List[dict],
-                          all_data: Dict[str, pd.DataFrame]) -> Tuple[pd.Series, pd.DataFrame]:
-        return build_nav_from_weights(weights_history, all_data)
+                         all_data: Dict[str, pd.DataFrame]) -> Tuple[pd.Series, pd.DataFrame]:
+        return _build_nav_from_weights(weights_history, all_data)
 
 
-def build_nav_from_weights(
+def _legacy_build_nav_from_weights(
     weights_history: List[dict],
     all_data: Dict[str, pd.DataFrame],
 ) -> Tuple[pd.Series, pd.DataFrame]:
@@ -112,7 +113,7 @@ def build_nav_from_weights(
     rebalance_map = {e['date']: e['weights'] for e in weights_history}
 
     for d in all_dates:
-        dt = datetime(d.year, d.month, d.day)
+        dt = pd.Timestamp(d).to_pydatetime()
 
         if dt in rebalance_map:
             weights = rebalance_map[dt]
@@ -172,3 +173,7 @@ def build_nav_from_weights(
     df_nav['nav'] = df_nav['nav'] / df_nav['nav'].iloc[0]
     df_weights = pd.DataFrame(weight_records).set_index('date')
     return df_nav['nav'], df_weights
+
+
+# Compatibility export; the canonical implementation lives in portfolio_nav.
+build_nav_from_weights = _build_nav_from_weights

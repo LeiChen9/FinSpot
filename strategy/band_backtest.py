@@ -20,13 +20,10 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from strategy.trading_costs import COMMISSION, MIN_FEE, SLIPPAGE, STAMP_TAX
 
 MA_WINDOW = 120
 LOT = 100
-COMMISSION = 0.0003            # 双边
-STAMP_TAX = 0.0005             # 卖出
-SLIPPAGE = 0.0005              # 双边
-MIN_FEE = 5.0
 
 
 @dataclass

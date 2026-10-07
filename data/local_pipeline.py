@@ -24,6 +24,7 @@ from data.local_universe import load_universe as _load_universe
 from data.local_fundamentals import fetch_financial_ths
 from data.local_fundamentals import stage_dividend as _stage_dividend
 from data.local_fundamentals import stage_financial as _stage_financial
+from data.local_benchmark import stage_benchmark as _stage_benchmark
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 META_DIR = os.path.join(DATA_DIR, 'meta')
@@ -83,36 +84,7 @@ def stage_dividend(codes: list):
 
 
 def stage_benchmark():
-    for code, name in BENCHMARK_ETFS.items():
-        path = os.path.join(DATA_DIR, f'{code}_market.csv')
-        try:
-            df = fetch_market_qfq(code, is_etf=True)
-            if df is None or len(df) < 200:
-                print(f'   [x] ETF {code}: 数据不足')
-                continue
-            df.to_csv(path)
-            print(f'   [√] {code} {name}: {len(df)} 行 {df.index[0].date()} ~ {df.index[-1].date()}')
-        except Exception as e:
-            print(f'   [x] ETF {code}: {e}')
-        time.sleep(0.5)
-    for code, name in BENCHMARK_IDX.items():
-        path = os.path.join(DATA_DIR, f'{code}_market.csv')
-        if os.path.exists(path):
-            df = pd.read_csv(path, index_col='date', parse_dates=True)
-            if df.index.max() >= pd.Timestamp('2026-08-01'):
-                print(f'   [√] {code} {name}: 本地已最新')
-                continue
-        try:
-            df = fetch_market_qfq(code)
-            if df is None or len(df) < 200:
-                print(f'   [x] 指数 {code}: 数据不足')
-                continue
-            df.to_csv(path)
-            print(f'   [√] {code} {name}: {len(df)} 行')
-        except Exception as e:
-            print(f'   [x] 指数 {code}: {e}')
-        time.sleep(0.5)
-    print('   [√] 基准下载完成')
+    _stage_benchmark(DATA_DIR, BENCHMARK_ETFS, BENCHMARK_IDX)
 
 
 def main():
