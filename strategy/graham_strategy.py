@@ -46,6 +46,14 @@ from strategy.graham_ranking import (
     profit_trend_components,
     rank_profit_trend,
 )
+from strategy.graham_dividends import (
+    corporate_actions as _corporate_actions_impl,
+    dividend_tax_rate as _dividend_tax_rate_impl,
+)
+from strategy.graham_calendar import (
+    rebalance_dates as _rebalance_dates,
+    trading_days as _trading_days,
+)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -73,39 +81,12 @@ SIZE_QUANTILE = 0.30       # 市值门禁: 需 ≥ 当日全A可交易市值分�
 SELL_FLOOR = 5             # 两档卖出: 持有中仍通过 ≥5/10 且门禁达标 → 继续持有
 SECTOR_WEIGHT_CAP = 0.25   # 单行业权重上限 (占 NAV)
 SECTOR_MAX_STOCKS = 4      # 单行业最大持仓只数
-def _corporate_actions(code: str, start: pd.Timestamp, end: pd.Timestamp) -> List[tuple]:
-    """Cash/stock actions after ``start`` and on or before ``end``.
-
-    Raw prices are used throughout the backtests.  This keeps dividends explicit
-    instead of treating a forward-adjusted price series as tax-free immediate
-    reinvestment.  The vendor expresses all action ratios per ten shares.
-    """
-    div = load_dividend(code)
-    if div is None or div.empty or '除权日' not in div.columns:
-        return []
-    d = div.copy()
-    d['action_date'] = pd.to_datetime(d['除权日'], errors='coerce')
-    d = d[(d['action_date'] > start) & (d['action_date'] <= end)].sort_values('action_date')
-    actions = []
-    for _, row in d.iterrows():
-        cash = pd.to_numeric(row.get('派息比例', np.nan), errors='coerce')
-        bonus = pd.to_numeric(row.get('送股比例', np.nan), errors='coerce')
-        transfer = pd.to_numeric(row.get('转增比例', np.nan), errors='coerce')
-        actions.append((row['action_date'],
-                        0.0 if not np.isfinite(cash) else float(cash) / 10.0,
-                        1.0 + (0.0 if not np.isfinite(bonus) else float(bonus) / 10.0)
-                            + (0.0 if not np.isfinite(transfer) else float(transfer) / 10.0)))
-    return actions
+def _corporate_actions(code, start, end):
+    return _corporate_actions_impl(code, start, end, load_dividend)
 
 
-def _dividend_tax_rate(buy_date: pd.Timestamp, pay_date: pd.Timestamp) -> float:
-    """A-share individual dividend withholding, using the holding period at payout."""
-    days = (pay_date - buy_date).days
-    if days <= 30:
-        return 0.20
-    if days <= 365:
-        return 0.10
-    return 0.0
+def _dividend_tax_rate(buy_date, pay_date):
+    return _dividend_tax_rate_impl(buy_date, pay_date)
 
 
 # Compatibility exports. The canonical cache implementation lives in data.graham.
@@ -376,25 +357,11 @@ from strategy.graham_evaluation import (  # noqa: E402
 # ─────────────────────────────────────────────────────────────
 
 def trading_days() -> pd.DatetimeIndex:
-    """以 000300 指数日期为交易日历 (宽基准)"""
-    df = load_index('000300')
-    if df is None or df.empty:
-        return pd.DatetimeIndex([])
-    return df.index
+    return _trading_days(load_index)
 
 
 def rebalance_dates() -> List[pd.Timestamp]:
-    cal = trading_days()
-    out = []
-    q = pd.Timestamp(START)
-    end = pd.Timestamp(END)
-    while q <= end:
-        nxt = cal[cal >= q]
-        if len(nxt):
-            out.append(pd.Timestamp(nxt[0]))
-        q = (pd.Timestamp(year=q.year, month=q.month, day=1)
-             + pd.DateOffset(months=3))  # 下一季度首日
-    return out
+    return _rebalance_dates(load_index, START, END)
 
 
 # ─────────────────────────────────────────────────────────────
