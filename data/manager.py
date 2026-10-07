@@ -123,97 +123,10 @@ class DataManager:
             for code in codes
         }
 
-    # =========================================================================
-    # 内部 — 缓存策略 + 多源降级
-    # =========================================================================
-
-    def _load_or_fetch(self, code: str, days: int,
-                       force: bool = False) -> pd.DataFrame:
-        """
-        统一缓存策略：优先读本地 CSV，存在且最新则直接返回；
-        存在但过期则增量追加；不存在则全量下载。
-        """
-        path = self._market_path(code)
-        end = self._nearest_trading_day()
-        start = end - timedelta(days=int(days * 1.5))
-
-        # 本地缓存已存在且最新
-        if not force and os.path.exists(path):
-            df_local = pd.read_csv(path, index_col='date', parse_dates=True)
-            if df_local.index.max() >= end:
-                print(f"   [√] 数据已最新: {path} ({len(df_local)} 条记录)")
-                return df_local.tail(days) if len(df_local) > days else df_local
-            # 增量更新：只下载最新日期之后的数据
-            start_inc = df_local.index.max() + timedelta(days=1)
-            df_new = self._try_sources(code, start_inc, end)
-            if df_new is not None and not df_new.empty:
-                combined = pd.concat([df_local, df_new])
-                combined = combined[~combined.index.duplicated(keep='last')]
-                combined.sort_index().to_csv(path)
-                print(f"   [√] 数据已增量更新: {path} ({len(combined)} 条)")
-                return combined.tail(days) if len(combined) > days else combined
-            return df_local.tail(days) if len(df_local) > days else df_local
-
-        # 全量下载
-        print(f"   [...] 下载行情数据: {code}")
-        df = self._try_sources(code, start, end)
-        if df is not None and not df.empty:
-            df.sort_index().to_csv(path)
-            print(f"   [√] 行情已保存: {path} ({len(df)} 条记录)")
-            return df.tail(days) if len(df) > days else df
-
-        # 本地有数据兜底
-        if os.path.exists(path):
-            df_local = pd.read_csv(path, index_col='date', parse_dates=True)
-            print(f"   [√] 使用本地数据: {path} ({len(df_local)} 条记录)")
-            return df_local.tail(days) if len(df_local) > days else df_local
-
-        raise RuntimeError(
-            f"无法从任何源获取行情数据: {code}。\n"
-            f"请在 {self.DATA_DIR} 下放置 {code}_market.csv\n"
-            f"CSV 格式: date,open,high,low,close,volume"
-        )
-
-    def _try_sources(self, code: str, start: datetime, end: datetime,
-                     source_list: list = None) -> pd.DataFrame | None:
-        """按优先级依次尝试数据源，返回第一个成功的结果"""
-        if source_list is None:
-            source_list = self.A_SOURCE_LIST
-        errors = []
-        for source in source_list:
-            try:
-                df = source(code, start, end)
-                if df is not None and not df.empty:
-                    return df
-            except Exception as exc:
-                errors.append(f"{source.__module__}.{source.__name__}: {exc}")
-        if errors:
-            raise RuntimeError(f"all market data sources failed for {code}: {'; '.join(errors)}")
-        return None
-
-    # =========================================================================
-    # 内部 — 港股
-    # =========================================================================
-
     def _is_hk(self, code: str) -> bool:
         return (code.startswith('hk') or code.endswith('.HK')
                 or (code.startswith('8') and len(code) == 6)
                 or len(code) == 5)
-
-    def _fetch_hk(self, code: str, days: int) -> pd.DataFrame:
-        end = self._nearest_trading_day()
-        start = end - timedelta(days=int(days * 1.5))
-        print(f"   [...] 下载港股数据: {code}")
-
-        df = akshare.fetch(code, start, end)
-        if df is not None and not df.empty:
-            return df.tail(days) if len(df) > days else df
-
-        df = baostock.fetch_hk(code, start, end)
-        if df is not None and not df.empty:
-            return df.tail(days) if len(df) > days else df
-
-        raise RuntimeError(f"无法获取港股数据: {code}")
 
     # =========================================================================
     # 内部 — 工具
@@ -231,9 +144,6 @@ class DataManager:
         while d.weekday() >= 5:
             d -= timedelta(days=1)
         return d
-
-    def _market_path(self, code: str) -> str:
-        return os.path.join(self.DATA_DIR, f'{code}_market.csv')
 
     def _valuation_path(self, code: str) -> str:
         return os.path.join(self.DATA_DIR, f'{code}_valuation.csv')
