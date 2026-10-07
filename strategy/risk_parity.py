@@ -5,61 +5,10 @@
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
 from typing import Dict, List, Callable, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass, field
-
-
-def calc_erc_weights(cov: pd.DataFrame, max_weight: float = 1.0) -> pd.Series:
-    """等风险贡献 (ERC) 权重
-
-    Args:
-        cov: 协方差矩阵 (n×n)
-        max_weight: 单资产权重上限
-
-    Returns:
-        权重序列
-    """
-    n = len(cov)
-    assets = cov.index
-
-    def _risk_contribution(w: np.ndarray) -> np.ndarray:
-        sigma = np.sqrt(w @ cov.values @ w)
-        return w * (cov.values @ w) / sigma
-
-    def _objective(w: np.ndarray) -> float:
-        rc = _risk_contribution(w)
-        return np.sum((rc - rc.mean()) ** 2)
-
-    constraints = [{'type': 'eq', 'fun': lambda w: w.sum() - 1.0}]
-    bounds = [(0.0, max_weight)] * n
-
-    best_result = None
-    best_obj = np.inf
-
-    seeds = [np.ones(n) / n]
-    for i in range(n):
-        seed = np.zeros(n)
-        seed[i] = 1.0
-        seeds.append(seed)
-
-    for seed in seeds:
-        result = minimize(
-            _objective, seed,
-            method='SLSQP',
-            bounds=bounds,
-            constraints=constraints,
-            options={'ftol': 1e-12, 'maxiter': 10000},
-        )
-        if result.success and result.fun < best_obj:
-            best_obj = result.fun
-            best_result = result
-
-    if best_result is None:
-        return pd.Series(np.ones(n) / n, index=assets)
-
-    return pd.Series(best_result.x, index=assets)
+from strategy.risk_parity_math import calc_erc_weights
 
 
 @dataclass
