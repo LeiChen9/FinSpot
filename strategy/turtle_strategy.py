@@ -131,16 +131,12 @@ class TurtleStrategy:
 
     def _generate_signals(self, market_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.Series]:
         """为所有股票生成信号"""
-        signals = {}
-        for code, df in market_data.items():
-            if len(df) < max(self.entry_period, self.exit_period, self.atr_period):
-                continue
-            try:
-                signal = self.signal_generator.generate(df)
-                signals[code] = signal
-            except Exception as e:
-                print(f"生成 {code} 信号失败: {e}")
-        return signals
+        min_history = max(self.entry_period, self.exit_period, self.atr_period)
+        return {
+            code: self.signal_generator.generate(frame)
+            for code, frame in market_data.items()
+            if len(frame) >= min_history
+        }
 
     def run(
         self,
