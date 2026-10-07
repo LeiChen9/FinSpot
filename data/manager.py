@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 from data.sources import qq, baostock, akshare, financial
+from data.market_cache import MarketCache
 
 
 class DataManager:
@@ -14,6 +15,8 @@ class DataManager:
 
     def __init__(self):
         os.makedirs(self.DATA_DIR, exist_ok=True)
+        self._market_cache = MarketCache(self.DATA_DIR, self.A_SOURCE_LIST,
+                                          (akshare.fetch, baostock.fetch_hk))
 
     # =========================================================================
     # 公共接口 — 指数 / 个股 行情
@@ -22,19 +25,19 @@ class DataManager:
     def get_stock_market_data(self, stock_code: str, days: int = 365 * 3,
                               force_download: bool = False) -> pd.DataFrame:
         """获取个股行情数据，优先本地缓存，过期则增量更新"""
-        return self._load_or_fetch(stock_code, days, force_download)
+        return self._market_cache.load_or_fetch(stock_code, days, force_download)
 
     def get_index_market_data(self, index_code: str, days: int = 365 * 3,
                               force_download: bool = False) -> pd.DataFrame:
         """获取指数行情数据，优先本地缓存，过期则增量更新"""
-        return self._load_or_fetch(index_code, days, force_download)
+        return self._market_cache.load_or_fetch(index_code, days, force_download)
 
     def get_market_data(self, code: str, days: int = 365 * 3,
                         force_download: bool = False) -> pd.DataFrame:
         """通用行情接口 — 自动识别市场并路由（供 scripts 使用）"""
         if self._is_hk(code):
-            return self._fetch_hk(code, days)
-        return self._load_or_fetch(code, days, force_download)
+            return self._market_cache.fetch_hk(code, days)
+        return self._market_cache.load_or_fetch(code, days, force_download)
 
     # =========================================================================
     # 公共接口 — 基金净值
