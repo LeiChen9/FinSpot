@@ -40,14 +40,14 @@ def target_weight(dev: float, cap: float = 0.10,
 
 
 def ma120_lowvol_mask(df: pd.DataFrame, as_of: pd.Timestamp,
-                      lookback: int = MA_VOL_LOOKBACK) -> bool:
+                      lookback: int = MA_VOL_LOOKBACK) -> Optional[float]:
     """MA120 序列在 as_of 回看 lookback 交易日内的日变化年化波动率"""
     hist = df[df.index <= as_of].tail(lookback + MA_WINDOW)
     if len(hist) < MA_WINDOW + 60:
-        return False
+        return None
     ma = hist['close'].rolling(MA_WINDOW).mean().dropna()
     if len(ma) < 60:
-        return False
+        return None
     vol = ma.pct_change().dropna().std() * np.sqrt(252)
     return vol
 
