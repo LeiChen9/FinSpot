@@ -12,23 +12,72 @@ Point-in-time 惯例:
 """
 from typing import Dict, List, Optional, Tuple
 import os
+import re
 
 import numpy as np
 import pandas as pd
-from screener.graham_data_access import (
-    DIV_CACHE as _DIV_CACHE, FIN_CACHE as _FIN_CACHE, MKT_CACHE as _MKT_CACHE,
-    indicator_series as _indicator_series, parse_value,
-    read_dividend as _read_dividend, read_fin as _read_fin, read_market as _read_market,
-)
-
-DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
-FIN_DIR = os.path.join(DATA_DIR, 'financial')
-DIV_DIR = os.path.join(DATA_DIR, 'dividend')
+from common.paths import DATA_DIR, DIV_DIR, FIN_DIR
 
 ANNUAL_REPORT_LAG = pd.DateOffset(months=4, days=30)  # 12-31 报告期 → 次年 4-30
 
 # ── 本地只读文件缓存 (同一进程内复用, 避免每次筛选重复读盘) ──
+UNITS = {'亿': 1e8, '万': 1e4, '元': 1}
+PATTERN = re.compile(r'^([-]?[\d,.]+)([亿万]?)$')
+FIN_CACHE: Dict[str, pd.DataFrame] = {}
+DIV_CACHE: Dict[str, pd.DataFrame] = {}
+MKT_CACHE: Dict[str, pd.DataFrame] = {}
 _GH_CACHE: Dict[Tuple[str, pd.Timestamp], 'GrahamHolding'] = {}
+
+
+def read_fin(code: str) -> pd.DataFrame:
+    if code not in FIN_CACHE:
+        path = os.path.join(FIN_DIR, f'{code}_fin.csv')
+        FIN_CACHE[code] = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+    return FIN_CACHE[code]
+
+
+def read_dividend(code: str) -> pd.DataFrame:
+    if code not in DIV_CACHE:
+        path = os.path.join(DIV_DIR, f'{code}_dividend.csv')
+        DIV_CACHE[code] = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame()
+    return DIV_CACHE[code]
+
+
+def read_market(code: str) -> pd.DataFrame:
+    if code not in MKT_CACHE:
+        path = os.path.join(DATA_DIR, f'{code}_market.csv')
+        MKT_CACHE[code] = (pd.read_csv(path, index_col='date', parse_dates=True,
+                                        usecols=['date', 'close'])
+                           if os.path.exists(path)
+                           else pd.DataFrame(index=pd.DatetimeIndex([])))
+    return MKT_CACHE[code]
+
+
+def parse_value(value) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text or text in ('--', '-', 'False', 'nan', 'None'):
+        return None
+    match = PATTERN.match(text)
+    if match:
+        return float(match.group(1).replace(',', '')) * UNITS.get(match.group(2), 1)
+    try:
+        return float(text)
+    except (ValueError, TypeError):
+        return None
+
+
+def indicator_series(df: pd.DataFrame, name: str) -> pd.Series:
+    row = df[df['指标'] == name]
+    if row.empty:
+        return pd.Series(dtype=float)
+    series = row.iloc[0, 2:].astype(object).map(parse_value)
+    series.index = pd.to_datetime(series.index, format='%Y%m%d', errors='coerce')
+    series = pd.to_numeric(series, errors='coerce')
+    return series[series.index.notna()].sort_index()
 
 
 class GrahamHolding:
@@ -48,7 +97,7 @@ class GrahamHolding:
 
     # ─── 财务 ───
     def _load(self):
-        df_full = _read_fin(self.code)
+        df_full = read_fin(self.code)
         if df_full.empty or '指标' not in df_full.columns:
             self.reason = '无财务数据'
             return
@@ -103,7 +152,7 @@ class GrahamHolding:
         path = os.path.join(DIV_DIR, f'{self.code}_dividend.csv')
         if not os.path.exists(path):
             return
-        df = _read_dividend(self.code)
+        df = read_dividend(self.code)
         if df.empty or '实施方案公告日期' not in df.columns:
             return
         df['公告日'] = pd.to_datetime(df['实施方案公告日期'], errors='coerce')
@@ -128,7 +177,7 @@ class GrahamHolding:
 
     # ─── 行情 ───
     def _close_price(self) -> Optional[float]:
-        df = _read_market(self.code)
+        df = read_market(self.code)
         df = df[df.index <= self.as_of]
         if df.empty:
             return None

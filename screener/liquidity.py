@@ -1,8 +1,16 @@
 """流动性筛选器 - 筛选成交额和成交量排名靠前的股票"""
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Dict
 import pandas as pd
-from screener.base import Screener, FilterResult
+from common.paths import DATA_DIR
+
+
+@dataclass
+class FilterResult:
+    codes: List[str] = field(default_factory=list)
+    names: Dict[str, str] = field(default_factory=dict)
+    info: Dict = field(default_factory=dict)
 
 # 简单的股票名称映射（部分常用股票）
 STOCK_NAMES = {
@@ -49,7 +57,7 @@ def get_stock_name(code: str) -> str:
     return STOCK_NAMES.get(code, f'股票{code}')
 
 
-class LiquidityScreener(Screener):
+class LiquidityScreener:
     """流动性筛选器
 
     筛选标准：
@@ -60,14 +68,13 @@ class LiquidityScreener(Screener):
 
     def __init__(
         self,
-        data_dir: str = '/Users/riceball/Documents/Projs/fund/data',
+        data_dir: str = str(DATA_DIR),
         top_n: int = 100,
         min_daily_amount: float = 1e7,  # 最低日成交额（元）
         min_daily_volume: float = 1e6,  # 最低日成交量（股）
         lookback_days: int = 252,  # 回看天数（约一年）
         min_history_days: int = 100,  # 数据刚开始时允许的最少历史长度
     ):
-        super().__init__()
         self.data_dir = Path(data_dir)
         self.top_n = top_n
         self.min_daily_amount = min_daily_amount

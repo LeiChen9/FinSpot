@@ -15,11 +15,8 @@ credentials.*
 secrets.*
 
 # Local datasets and generated research output
-data/*.csv
-data/*.json
-data/meta/
-data/financial/
-data/dividend/
+/data/*
+/tests/baseline/
 reports/generated/
 
 # Notebook checkpoints

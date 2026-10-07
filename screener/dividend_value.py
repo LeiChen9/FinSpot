@@ -1,6 +1,6 @@
 """高息价值池筛选器 — 4 选 3 (股息率/PE_TTM/ROE连续三年/市值) — point-in-time 无泄漏
 
-口径与 screener/pool_screener.py 一致:
+口径与 screener/pool.py 一致:
   - 财报/分红仅使用 公告日期 ≤ as_of 的记录 (公告日期缺失视为可见)
   - 股息率 = 最近一次已公告年度每股派息 ÷ 不复权收盘价 (18 个月内有效)
   - PE_TTM = 不复权收盘价 ÷ TTM 每股归母净利 (公告可见)
@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from screener.pool_screener import (
+from screener.pool import (
     load_balance,
     load_profit,
     raw_close,
@@ -24,7 +24,7 @@ from screener.pool_screener import (
     pe_ttm,
 )
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
+from common.paths import DATA_DIR
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
 DIV_DIR = os.path.join(DATA_DIR, 'dividend')
 META_DIR = os.path.join(DATA_DIR, 'meta')

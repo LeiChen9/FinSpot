@@ -1,6 +1,6 @@
 import pandas as pd
 
-from data.local import cached_market_loader, load_market_frames
+from dataload.readers import cached_market_loader, load_market_frames
 
 
 def test_local_market_loader_reads_and_caches_csv(tmp_path):

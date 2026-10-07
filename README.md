@@ -9,11 +9,14 @@
 
 ## Layout
 
-- `data/`: 本地数据源、缓存与数据准备管线
-- `strategy/`: 策略规则、信号、因子和筛选逻辑
-- `backtest/`: 唯一的回测执行、组合、交易成本和回测结果域
+- `notebooks/`: 研究入口，只负责加载数据、配置策略、运行回测和检查结果
+- `strategy/`: 每个文件维护一个完整策略
+- `backtest/`: 通用组合执行、交易成本、日历、回测结果与指标
 - `screener/`: point-in-time 股票池与基本面筛选
-- `analysis/`: 回测、绩效、风险和归因分析
-- `notebooks/`: 研究入口与结果复核
+- `dataload/`: 本地缓存读取、在线数据源与数据准备管线
+- `common/`: 数据路径等跨领域基础配置
+- `data/`: 本地行情、财务、分红和缓存，整个目录不入 Git
 
-本地行情、财务、分红、meta、报告和凭据文件均由 `.gitignore` 排除。
+notebook 可从项目根目录执行，例如 `conda run -n fund jupyter lab`。抓取管线通过
+`python -m dataload.pipeline_graham` 或 `python -m dataload.pipeline_local` 调用。
+报告输出位于被忽略的 `reports/generated/`。

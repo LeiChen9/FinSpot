@@ -10,12 +10,11 @@ requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.24",
   "pandas>=2.0",
-  "scipy>=1.10",
   "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
-data = ["akshare>=1.12", "baostock>=0.8"]
+data = ["akshare>=1.12", "baostock>=0.8", "requests>=2.31"]
 dev = ["pytest>=7", "ruff>=0.5"]
 
 [tool.pytest.ini_options]
@@ -23,4 +22,4 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 
 [tool.setuptools]
-packages = ["analysis", "applications", "backtest", "core", "data", "data.sources", "indicators", "screener", "strategy", "visualization"]
+packages = ["backtest", "common", "dataload", "dataload.sources", "screener", "strategy"]

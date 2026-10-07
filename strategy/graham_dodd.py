@@ -1,0 +1,977 @@
+#!/usr/bin/env python
+"""Graham & Dodd 防御型 10 条 - A股 回测核心逻辑 (无泄漏)
+
+数据均为 dataload 管线缓存, 全部为本地文件 (见 dataload/readers.py):
+    data/meta/graham_universe.csv     全A股清单
+    data/financial/{code}_{balance,profit}.csv   sina 报表(含公告日期)
+    data/dividend/{code}_dividend.csv  巨潮分红(实施方案公告日期)
+    data/{code}_market.csv             不复权日线
+    data/{code}_qfq.csv                前复权日线
+    data/zh_10y_treasury.csv           中债10Y国债收益率 (AAA代理)
+    data/meta/all_a_pe.csv             全部A股平均/中位 PE
+
+无泄漏约定:
+  - 财报/分红仅使用 公告日期 ≤ 调仓日 D 的记录
+  - 收盘价形成信号 + 下一交易日成交
+  - 全部A股为资产池; D 无成交价 → 判不可交易
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+from dataload.readers import (
+    load_10y,
+    load_all_a_pe,
+    load_balance,
+    load_dividend,
+    load_index,
+    load_market,
+    load_profit,
+    load_universe,
+)
+from backtest.metrics import perf_metrics
+
+START = pd.Timestamp('2023-01-01')
+END = pd.Timestamp('2026-07-31')
+
+# 成本假设 (A股现实)
+COMMISSION = 0.0003        # 佣金 万3 双向
+COMMISSION_MIN = 5.0       # 单笔最低 5 元
+TRANSFER_FEE = 0.00001     # 过户费 双向
+STAMP_TAX_HI = 0.001       # 印花税 卖出 (2023-08-28 前)
+STAMP_TAX_LO = 0.0005      # 印花税 卖出 (2023-08-28 起)
+STAMP_CUTOFF = pd.Timestamp('2023-08-28')
+
+MAX_HOLDINGS = 30          # 最大持仓数
+MAX_WEIGHT = 0.15          # 单只最大仓位
+YIELD_AUTHORITY = '中债10年期国债收益率(AAA代理)'
+MIN_PASS_DEF = 8           # 防御型纳入口径: 至少 8/10，且核心防御条件不得缺失
+
+# —— 防御型纪律 (格雷厄姆) ——
+SIZE_QUANTILE = 0.30       # 市值门禁: 需 ≥ 当日全A可交易市值分布的该分位 (温和档, 排除底部30%)
+SELL_FLOOR = 5             # 两档卖出: 持有中仍通过 ≥5/10 且门禁达标 → 继续持有
+SECTOR_WEIGHT_CAP = 0.25   # 单行业权重上限 (占 NAV)
+SECTOR_MAX_STOCKS = 4      # 单行业最大持仓只数
+
+# —— 估值仪表盘 ——
+GAUGE_LOOKBACK_YEARS = 10
+GAUGE_LO_PCT = 0.50
+GAUGE_HI_PCT = 0.85
+GAUGE_LO_WEIGHT = 0.40
+
+
+# ─────────────────────────────────────────────────────────────
+# 宏观辅助 (估值仪表盘)
+# ─────────────────────────────────────────────────────────────
+
+def r10y(date: pd.Timestamp) -> float:
+    values = load_10y()["中国国债收益率10年"]
+    values = values[values.index <= date]
+    return float(values.iloc[-1]) / 100 if not values.empty else np.nan
+
+
+def market_avg_pe_5y(date: pd.Timestamp) -> float:
+    frame = load_all_a_pe()
+    values = frame[(frame.index > date - pd.DateOffset(years=5)) & (frame.index <= date)]
+    return float(values["averagePETTM"].mean()) if not values.empty else np.nan
+
+
+def market_gauge(date: pd.Timestamp, lookback_years: int = GAUGE_LOOKBACK_YEARS) -> float:
+    values = load_all_a_pe()["averagePETTM"]
+    values = values[values.index <= date]
+    if len(values) < 60:
+        return 0.5
+    history = values[values.index > date - pd.DateOffset(years=lookback_years)]
+    if len(history) < 60:
+        history = values
+    return float((history < values.iloc[-1]).mean())
+
+
+def target_equity_weight(gauge: float) -> float:
+    if gauge <= GAUGE_LO_PCT:
+        return 1.0
+    if gauge >= GAUGE_HI_PCT:
+        return GAUGE_LO_WEIGHT
+    decline = (gauge - GAUGE_LO_PCT) / (GAUGE_HI_PCT - GAUGE_LO_PCT)
+    return 1.0 - decline * (1.0 - GAUGE_LO_WEIGHT)
+
+
+# ─────────────────────────────────────────────────────────────
+# 资产池元数据视图
+# ─────────────────────────────────────────────────────────────
+
+class UniverseView:
+    def __init__(self, load_universe_):
+        self._load_universe = load_universe_
+        self._names: Optional[Dict[str, str]] = None
+        self._industries: Optional[Dict[str, str]] = None
+
+    def name_of(self, code: str) -> str:
+        if self._names is None:
+            universe = self._load_universe()
+            self._names = dict(zip(universe["code"], universe["name"]))
+        return self._names.get(code, code)
+
+    def industry_of(self, code: str) -> str:
+        if self._industries is None:
+            universe = self._load_universe()
+            self._industries = {}
+            if "industry" in universe.columns:
+                for symbol, industry in zip(universe["code"], universe["industry"].fillna("")):
+                    self._industries[str(symbol)] = str(industry)
+        return self._industries.get(code, "")
+
+
+def is_st_name(name: str) -> bool:
+    """Reject currently labelled ST securities from defensive candidates."""
+    return bool(name and "ST" in str(name).upper())
+
+
+_universe_view = UniverseView(load_universe)
+name_of = _universe_view.name_of
+industry_of = _universe_view.industry_of
+
+
+# ─────────────────────────────────────────────────────────────
+# 调仓日历 & 市场交易日
+# ─────────────────────────────────────────────────────────────
+
+def trading_days() -> pd.DatetimeIndex:
+    """Use the CSI 300 cache as the broad-market trading calendar."""
+    frame = load_index("000300")
+    if frame is None or frame.empty:
+        return pd.DatetimeIndex([])
+    return frame.index
+
+
+def rebalance_dates() -> List[pd.Timestamp]:
+    calendar = trading_days()
+    dates = []
+    current = pd.Timestamp(START)
+    while current <= END:
+        next_day = calendar[calendar >= current]
+        if len(next_day):
+            dates.append(pd.Timestamp(next_day[0]))
+        current = pd.Timestamp(year=current.year, month=current.month, day=1)
+        current += pd.DateOffset(months=3)
+    return dates
+
+
+# ─────────────────────────────────────────────────────────────
+# 持仓与 A 股交易成本
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class Pos:
+    code: str
+    name: str
+    shares: float
+    buy_price: float
+    invested: float
+    anchor_qfq: float
+    buy_date: pd.Timestamp
+
+
+def stamp_tax(D: pd.Timestamp) -> float:
+    return STAMP_TAX_LO if D >= STAMP_CUTOFF else STAMP_TAX_HI
+
+
+def buy_fee(amount: float) -> float:
+    return max(amount * COMMISSION, COMMISSION_MIN) + amount * TRANSFER_FEE
+
+
+def sell_fee(D: pd.Timestamp, amount: float) -> float:
+    tax = stamp_tax(D)
+    return max(amount * COMMISSION, COMMISSION_MIN) + amount * TRANSFER_FEE + amount * tax
+
+
+# ─────────────────────────────────────────────────────────────
+# 分红与公司行为
+# ─────────────────────────────────────────────────────────────
+
+def corporate_actions(code: str, start: pd.Timestamp, end: pd.Timestamp) -> List[tuple]:
+    """Return cash and stock actions after ``start`` through ``end``."""
+    dividend = load_dividend(code)
+    if dividend is None or dividend.empty or "除权日" not in dividend.columns:
+        return []
+    frame = dividend.copy()
+    frame["action_date"] = pd.to_datetime(frame["除权日"], errors="coerce")
+    frame = frame[
+        (frame["action_date"] > start) & (frame["action_date"] <= end)
+    ].sort_values("action_date")
+    actions = []
+    for _, row in frame.iterrows():
+        cash = pd.to_numeric(row.get("派息比例", np.nan), errors="coerce")
+        bonus = pd.to_numeric(row.get("送股比例", np.nan), errors="coerce")
+        transfer = pd.to_numeric(row.get("转增比例", np.nan), errors="coerce")
+        actions.append((
+            row["action_date"],
+            0.0 if not np.isfinite(cash) else float(cash) / 10.0,
+            1.0 + (0.0 if not np.isfinite(bonus) else float(bonus) / 10.0)
+            + (0.0 if not np.isfinite(transfer) else float(transfer) / 10.0),
+        ))
+    return actions
+
+
+def dividend_tax_rate(buy_date: pd.Timestamp, pay_date: pd.Timestamp) -> float:
+    """Return A-share individual dividend withholding by holding period."""
+    days = (pay_date - buy_date).days
+    if days <= 30:
+        return 0.20
+    if days <= 365:
+        return 0.10
+    return 0.0
+
+
+# ─────────────────────────────────────────────────────────────
+# 单股 point-in-time 快照
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class Snap:
+    code: str = ''
+    name: str = ''
+    D: pd.Timestamp = None
+    market_cap: float = np.nan       # 依据最新股本 × 收盘价
+    shares: float = np.nan           # 股数 (实收资本)
+    bvps: float = np.nan             # 归母净资产/股
+    tbvps: float = np.nan            # 有形净资产/股
+    ncavps: float = np.nan           # 净流动资产/股
+    current_ratio: float = np.nan
+    debt_ratio: float = np.nan       # 负债/归母净资产 (产权比率)
+    cond8: float = np.nan            # 负债 / (2×NCA) <1 判定用
+    eps_ttm: float = np.nan
+    eps_annual: List[float] = field(default_factory=list)
+    eps_years: List[int] = field(default_factory=list)
+    np_annual: List[float] = field(default_factory=list)   # 年报归母净利 (公告日≤D)
+    np_years: List[int] = field(default_factory=list)
+    roe_annual: List[float] = field(default_factory=list)  # 年报 ROE (净利 ÷ 当年末净资产)
+    ttm_yoy: float = np.nan                                # TTM 归母净利同比
+    dividend_yield: float = np.nan
+    div_years: List[int] = field(default_factory=list)  # 已公告(≤D)现金分红对应的财年
+    industry: str = ''
+    price: float = np.nan            # 不复权收盘
+    tradable: bool = False
+    has_10y: bool = False
+    reason: str = ''
+
+
+def _close_at(df, at: pd.Timestamp) -> float:
+    prev = df.index[df.index <= at]
+    if len(prev) == 0:
+        return np.nan
+    return float(df.loc[prev[-1], 'close'])
+
+
+def snapshot(code: str, D: pd.Timestamp, bal=None, pro=None, div=None,
+             mkt_raw=None) -> Snap:
+    s = Snap(code=code, D=D)
+    s.name = name_of(code)
+    bal = bal if bal is not None else load_balance(code)
+    pro = pro if pro is not None else load_profit(code)
+    div = div if div is not None else load_dividend(code)
+    mkt_raw = mkt_raw if mkt_raw is not None else load_market(code, qfq=False)
+
+    if bal is None or pro is None or mkt_raw is None or mkt_raw.empty:
+        s.reason = '缺数据'
+        return s
+
+    # 价格 (不复权, 仅可用时)
+    if D in mkt_raw.index:
+        price = float(mkt_raw.loc[D, 'close'])
+    else:
+        price = np.nan
+    if not np.isfinite(price) or price <= 0:
+        s.reason = 'D日无成交'
+        return s
+    s.price = price
+    s.tradable = True
+    s.industry = industry_of(code)
+
+    # 最新已披露资产负债表 (公告日 ≤ D)
+    bd = bal[bal['公告日期'].fillna(pd.Timestamp.max) <= D]
+    if bd.empty:
+        s.reason = '无已披露报表'
+        return s
+    b = bd.sort_values('报告日').iloc[-1]
+
+    ta = b.get('资产总计', np.nan)
+    ca = b.get('流动资产合计', np.nan)
+    cl = b.get('流动负债合计', np.nan)
+    tl = b.get('负债合计', np.nan)
+    ias = b.get('无形资产', np.nan)
+    gw = b.get('商誉', np.nan)
+    eq = b.get('归属于母公司股东权益合计', np.nan)
+    ticks = b.get('实收资本(或股本)', np.nan)
+
+    # 用"所有者权益合计"兜底归母权益
+    if not np.isfinite(eq):
+        eq = b.get('所有者权益(或股东权益)合计', np.nan)
+
+    if not np.isfinite(ticks) or ticks <= 0:
+        s.reason = '缺股本'
+        return s
+    s.shares = ticks          # 实收资本(元)→股 (面值1元假设)
+
+    s.market_cap = price * ticks
+    if np.isfinite(eq) and eq > 0:
+        s.bvps = eq / ticks
+        s.tbvps = (eq - (ias if np.isfinite(ias) else 0.0)
+                   - (gw if np.isfinite(gw) else 0.0)) / ticks
+    if np.isfinite(ca) and np.isfinite(tl):
+        nca = ca - tl
+        s.ncavps = nca / ticks
+        s.cond8 = tl / (2 * nca) if nca > 0 else np.inf
+    if np.isfinite(ca) and np.isfinite(cl) and cl > 0:
+        s.current_ratio = ca / cl
+    if np.isfinite(tl) and np.isfinite(eq) and eq > 0:
+        s.debt_ratio = tl / eq
+
+    # 最新已披露利润表 (公告日 ≤ D) → TTM 归母净利
+    pd_ = pro[pro['公告日期'].fillna(pd.Timestamp.max) <= D]
+    if pd_.empty:
+        s.reason = '无已披露利润表'
+        return s
+    pf = pd_.sort_values('报告日')
+    latest = pf.iloc[-1]
+    cum_profit = latest['归属于母公司所有者的净利润']
+    if not np.isfinite(cum_profit):
+        cum_profit = np.nan
+
+    # TTM = 最新累计 + 上年报 - 去年同期累计
+    rdate = latest['报告日']
+    same_q_prev = rdate - pd.DateOffset(years=1)
+    prev_annual = pf[
+        (pf['报告日'].dt.month == 12) & (pf['报告日'] < rdate)
+    ]
+    lyr_val = np.nan
+    if not prev_annual.empty:
+        lyr_val = float(prev_annual.iloc[-1]['归属于母公司所有者的净利润'])
+    sq_prev = pf[pf['报告日'] == same_q_prev]
+    sq_val = float(sq_prev.iloc[-1]['归属于母公司所有者的净利润']) if not sq_prev.empty else np.nan
+
+    if np.isfinite(cum_profit) and np.isfinite(lyr_val) and np.isfinite(sq_val):
+        ttm = cum_profit + lyr_val - sq_val
+        s.eps_ttm = ttm / ticks if ticks > 0 else np.nan
+
+        # TTM 归母净利同比: 一年前同报告期口径的 TTM (盈利趋势的分量之一)
+        rdate_p = rdate - pd.DateOffset(years=1)
+        blk_p = pf[pf['报告日'] <= rdate_p]
+        if not blk_p.empty:
+            lp = blk_p.iloc[-1]
+            cum_prev = lp['归属于母公司所有者的净利润']
+            pa2 = pf[(pf['报告日'].dt.month == 12) & (pf['报告日'] < lp['报告日'])]
+            lyr2 = float(pa2.iloc[-1]['归属于母公司所有者的净利润']) if not pa2.empty else np.nan
+            sq2 = pf[pf['报告日'] == lp['报告日'] - pd.DateOffset(years=1)]
+            sq2_v = float(sq2.iloc[-1]['归属于母公司所有者的净利润']) if not sq2.empty else np.nan
+            if (np.isfinite(cum_prev) and np.isfinite(lyr2) and np.isfinite(sq2_v)):
+                ttm_prev = cum_prev + lyr2 - sq2_v
+                if ttm_prev > 0:
+                    s.ttm_yoy = ttm / ttm_prev - 1.0
+
+    # 年度EPS/净利序列 (公告≤D, 报告日为12-31), 用于十年增长/降年 + 盈利趋势
+    annuals = pf[pf['报告日'].dt.month == 12]
+    for _, r in annuals.iterrows():
+        v = pd.to_numeric(r['基本每股收益'], errors='coerce')
+        if np.isfinite(v):
+            s.eps_annual.append(float(v))
+            s.eps_years.append(int(r['报告日'].year))
+        npv = pd.to_numeric(r.get('归属于母公司所有者的净利润', np.nan), errors='coerce')
+        if np.isfinite(npv):
+            s.np_annual.append(float(npv))
+            s.np_years.append(int(r['报告日'].year))
+    if len(s.eps_annual) >= 10:
+        s.has_10y = True
+
+    # 年度 ROE 序列: 净利 Y ÷ 最早披露≤D 的 Y-12-31 归母净资产 (公告≤D, 无前视)
+    if s.np_annual:
+        balD = bal[bal['公告日期'].fillna(pd.Timestamp.max) <= D].dropna(subset=['报告日'])
+        balD = balD.sort_values('报告日')
+        for npv, y in zip(s.np_annual, s.np_years):
+            eq_row = balD[balD['报告日'] <= pd.Timestamp(year=y, month=12, day=31)]
+            if eq_row.empty:
+                continue
+            b = eq_row.iloc[-1]
+            eq = b.get('归属于母公司股东权益合计', np.nan)
+            if not np.isfinite(eq):
+                eq = b.get('所有者权益(或股东权益)合计', np.nan)
+            if np.isfinite(eq) and eq > 0 and npv > 0:
+                s.roe_annual.append(npv / eq)
+            else:
+                s.roe_annual.append(np.nan)
+
+    # 分红收益率
+    if div is not None and not div.empty and '实施方案公告日期' in div.columns:
+        dv = div.copy()
+        dv['公告日'] = pd.to_datetime(dv['实施方案公告日期'], errors='coerce')
+        dv['派息比例'] = pd.to_numeric(dv['派息比例'], errors='coerce')
+        annual = dv[(dv['公告日'].fillna(pd.Timestamp.max) <= D)
+                    & dv['报告时间'].astype(str).str.endswith('年报')
+                    & (dv['派息比例'].fillna(0) > 0)]
+        if not annual.empty:
+            latest_div = annual.sort_values('公告日').iloc[-1]
+            if latest_div['公告日'] >= D - pd.DateOffset(days=550):
+                dps = latest_div['派息比例'] / 10.0
+                s.dividend_yield = dps / price
+        # 近若干财年现金分红记录 (财年 = 报告年度, 公告日 ≤ D)
+        dvec = dv[(dv['公告日'].fillna(pd.Timestamp.max) <= D)]
+        dvec = dvec[pd.to_numeric(dvec['派息比例'], errors='coerce').fillna(0) > 0]
+        yrs = pd.to_numeric(dvec['报告时间'].astype(str).str.extract(r'^(\d{4})')[0],
+                            errors='coerce')
+        s.div_years = sorted(int(y) for y in yrs.dropna().unique())
+    return s
+
+
+# ─────────────────────────────────────────────────────────────
+# 防御型 10 条件与门禁评估
+# ─────────────────────────────────────────────────────────────
+
+COND_NAMES = [
+    ('c1', '收益价格比 ≥ 2×AAA'),
+    ('c2', 'PE ≤ 60%×市场5年均PE'),
+    ('c3', '股息率 ≥ 2/3×AAA'),
+    ('c4', '价格 ≤ 2/3 有形净资产'),
+    ('c5', '价格 ≤ 2/3 净流动资产'),
+    ('c6', '负债/净资产 < 1'),
+    ('c7', '流动比率 ≥ 2'),
+    ('c8', '总负债 < 2×净流动资产'),
+    ('c9', '十年EPS CAGR > 7%'),
+    ('c10', '十年中EPS下滑年 ≤ 2'),
+]
+
+GATE_NAMES = [
+    ('earnings', '连续盈利: 近5年报 ≤1次为负 且最近一年为正'),
+    ('dividend', '近5财年现金分红 ≥4 年'),
+    ('size', '市值 ≥ 当日全A可交易分位下限'),
+]
+
+
+@dataclass
+class Eval:
+    passed: bool = False
+    npass: int = 0
+    gates_ok: bool = False
+    values: Dict[str, float] = field(default_factory=dict)
+    detail: Dict[str, Tuple[bool, str, str]] = field(default_factory=dict)
+    gates: Dict[str, Tuple[bool, str, str]] = field(default_factory=dict)
+
+
+def evaluate(s: Snap, D: pd.Timestamp, r=None, mpe=None, min_pass: int = 7,
+             size_floor: Optional[float] = None) -> Eval:
+    result = Eval()
+    if r is None:
+        r = r10y(D)
+    if mpe is None:
+        mpe = market_avg_pe_5y(D)
+    if not s.tradable or not np.isfinite(r) or not np.isfinite(mpe):
+        result.detail['c1'] = (False, 'NA', f'不可交易/缺宏观({r=:},{mpe=:})')
+        return result
+
+    pe_ttm = s.price / s.eps_ttm if np.isfinite(s.eps_ttm) and s.eps_ttm > 0 else np.nan
+
+    def c1():
+        ep = s.eps_ttm / s.price
+        need = 2 * r
+        return ep >= need, f'{ep:.4f}', f'≥{need:.4f}'
+
+    def c2():
+        if not np.isfinite(pe_ttm):
+            return False, 'PE<0(无)', f'≤{0.6*mpe:.1f}'
+        return pe_ttm <= 0.6 * mpe, f'{pe_ttm:.1f}', f'≤{0.6*mpe:.1f}'
+
+    def c3():
+        need = (2 / 3) * r
+        y = s.dividend_yield
+        return (np.isfinite(y) and y >= need), f'{y:.4f}' if np.isfinite(y) else '无分红', f'≥{need:.4f}'
+
+    def c4():
+        if not np.isfinite(s.tbvps):
+            return False, 'NA', f'≤{2/3*0:.2f}'
+        return s.price <= (2 / 3) * s.tbvps, f'{s.price:.1f} ', f'≤{2/3*s.tbvps:.1f}'
+
+    def c5():
+        if not np.isfinite(s.ncavps):
+            return False, 'NA', '≤2/3×NCA'
+        return s.price <= (2 / 3) * s.ncavps, f'{s.price:.1f}', f'≤{2/3*s.ncavps:.1f}'
+
+    def c6():
+        return np.isfinite(s.debt_ratio) and s.debt_ratio < 1.0, \
+            f'{s.debt_ratio:.2f}' if np.isfinite(s.debt_ratio) else 'NA', '<1'
+
+    def c7():
+        return np.isfinite(s.current_ratio) and s.current_ratio >= 2.0, \
+            f'{s.current_ratio:.2f}' if np.isfinite(s.current_ratio) else 'NA', '≥2'
+
+    def c8():
+        return np.isfinite(s.cond8) and s.cond8 < 1.0, \
+            f'{s.cond8:.2f}' if np.isfinite(s.cond8) else 'NA', '<1'
+
+    def c9():
+        if not s.has_10y:
+            return False, '不足10年', 'CAGR>7%'
+        eps = s.eps_annual[-10:]
+        years = s.eps_years[-10:]
+        first, last = eps[0], eps[-1]
+        if first <= 0 or last <= 0:
+            return False, f'{last:e}', 'CAGR>7%'
+        cagr = (last / first) ** (1 / (years[-1] - years[0])) - 1
+        return cagr > 0.07, f'{cagr:.1%}', '>7%'
+
+    def c10():
+        if not s.has_10y:
+            return False, '不足10年', '≤2'
+        eps = s.eps_annual[-10:]
+        declines = sum(eps[i] < eps[i - 1] for i in range(1, len(eps)))
+        return declines <= 2, f'{declines}年', '≤2'
+
+    checks = [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10]
+    for (condition_id, _label), check in zip(COND_NAMES, checks):
+        passed, current, requirement = check()
+        result.detail[condition_id] = (bool(passed), str(current), str(requirement))
+        result.npass += int(passed)
+
+    defensive_core = ('c1', 'c2', 'c3', 'c6', 'c7', 'c8', 'c9', 'c10')
+    result.passed = result.npass >= min_pass and all(
+        result.detail[key][0] for key in defensive_core
+    )
+
+    eps = s.eps_annual
+    if len(eps) >= 5:
+        tail = eps[-5:]
+        negative = sum(not np.isfinite(value) or value < 0 for value in tail)
+        earnings_ok = negative <= 1 and np.isfinite(tail[-1]) and tail[-1] > 0
+        result.gates['earnings'] = (
+            earnings_ok, f'{tail[-1]:.4f} (近{len(tail)}年, 负{negative}次)', '≥0 且负次数≤1'
+        )
+    else:
+        result.gates['earnings'] = (False, f'仅{len(eps)}年报', '需≥3年报')
+
+    fiscal_end = int(D.year) - 1
+    needed_years = [fiscal_end - offset for offset in range(5)]
+    paid_years = [year for year in needed_years if year in s.div_years]
+    dividend_ok = len(paid_years) >= 4
+    result.gates['dividend'] = (
+        dividend_ok, f'{len(paid_years)}/5 财年',
+        f'≥4 财年 ({needed_years[0]}~{needed_years[-1]})',
+    )
+
+    if size_floor is None or not np.isfinite(s.market_cap):
+        size_ok = size_floor is None
+        requirement = '未评估' if size_floor is None else f'≥{size_floor/1e8:.0f}亿'
+        result.gates['size'] = (size_ok, f'{s.market_cap/1e8:.0f}亿', requirement)
+    else:
+        result.gates['size'] = (
+            s.market_cap >= size_floor, f'{s.market_cap/1e8:.0f}亿',
+            f'≥{size_floor/1e8:.0f}亿',
+        )
+
+    result.gates_ok = all(result.gates[name][0] for name in ('earnings', 'dividend', 'size'))
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# 候选排序规则
+# ─────────────────────────────────────────────────────────────
+
+def margin_of_safety_score(snap: Snap) -> float:
+    """Combine tangible-book and normalized-earnings valuation ranks."""
+    tangible_book = (
+        snap.tbvps
+        if np.isfinite(snap.tbvps) and snap.tbvps > 0
+        else np.nan
+    )
+    earnings_multiple = (
+        snap.price / snap.eps_ttm
+        if np.isfinite(snap.eps_ttm) and snap.eps_ttm > 0
+        else np.nan
+    )
+    if np.isfinite(tangible_book) and np.isfinite(earnings_multiple):
+        return (snap.price / tangible_book) * (earnings_multiple / 20.0)
+    if np.isfinite(tangible_book):
+        return snap.price / tangible_book
+    return np.inf if not np.isfinite(earnings_multiple) else earnings_multiple
+
+
+def profit_trend_components(snap: Snap) -> Optional[Dict[str, float]]:
+    """Return point-in-time earnings trend measures available for a security."""
+    if not snap.tradable:
+        return None
+
+    components = {}
+    if np.isfinite(snap.ttm_yoy):
+        components["ttm_yoy"] = snap.ttm_yoy
+
+    annual_profit = snap.np_annual[-6:]
+    if len(annual_profit) >= 4 and all(value > 0 for value in annual_profit):
+        log_profit = np.log(np.asarray(annual_profit, dtype=float))
+        years = np.arange(len(log_profit), dtype=float)
+        components["slope"] = float(np.polyfit(years, log_profit, 1)[0])
+
+    roe = [value for value in snap.roe_annual if np.isfinite(value)]
+    if roe:
+        components["roe"] = roe[-1]
+        if len(roe) >= 3:
+            components["roe_trend"] = roe[-1] - roe[-3]
+
+    growth_run = 0
+    for index in range(len(snap.np_annual) - 1, 0, -1):
+        if snap.np_annual[index] <= snap.np_annual[index - 1]:
+            break
+        growth_run += 1
+    if len(snap.np_annual) >= 2:
+        components["run"] = float(growth_run)
+    return components or None
+
+
+def rank_profit_trend(candidates: List[Snap]) -> Dict[int, float]:
+    """Rank candidate trend components by descending cross-sectional percentile."""
+    keys = ("ttm_yoy", "slope", "roe", "roe_trend", "run")
+    components = [profit_trend_components(candidate) for candidate in candidates]
+    scores = {}
+    for index, measures in enumerate(components):
+        if measures is None:
+            scores[id(candidates[index])] = float("inf")
+            continue
+        score = 0.0
+        for key in keys:
+            if key not in measures:
+                continue
+            values = [item[key] for item in components if item is not None and key in item]
+            rank = pd.Series(values).rank(ascending=False, method="min").iloc[
+                values.index(measures[key])
+            ]
+            score += float(rank)
+        scores[id(candidates[index])] = score
+    return scores
+
+
+# ─────────────────────────────────────────────────────────────
+# 全市场筛选
+# ─────────────────────────────────────────────────────────────
+
+class GrahamScreening:
+    def __init__(self, load_universe_, snapshot_, evaluate_, r10y_, market_avg_pe_5y_,
+                 is_st_name_, size_quantile: float):
+        self.load_universe = load_universe_
+        self.snapshot = snapshot_
+        self.evaluate = evaluate_
+        self.r10y = r10y_
+        self.market_avg_pe_5y = market_avg_pe_5y_
+        self.is_st_name = is_st_name_
+        self.size_quantile = size_quantile
+        self.funnel: Dict[pd.Timestamp, dict] = {}
+
+    def screen(self, date: pd.Timestamp, min_pass: int = 7,
+               size_quantile: float | None = None) -> List[Tuple[object, object]]:
+        universe = self.load_universe()
+        results, caps = [], []
+        scored = 0
+        rate = self.r10y(date)
+        market_pe = self.market_avg_pe_5y(date)
+        for code in universe["code"]:
+            snap = self.snapshot(code, date)
+            if not snap.tradable or self.is_st_name(snap.name) or not snap.industry:
+                continue
+            if not np.isfinite(snap.market_cap) or snap.market_cap <= 0:
+                continue
+            scored += 1
+            evaluation = self.evaluate(
+                snap, date, r=rate, mpe=market_pe,
+                min_pass=min_pass, size_floor=None,
+            )
+            caps.append(float(snap.market_cap))
+            if evaluation.passed:
+                results.append((snap, evaluation))
+
+        quantile = self.size_quantile if size_quantile is None else size_quantile
+        floor = float(pd.Series(caps).quantile(quantile)) if caps else np.inf
+        dividend_ok = earnings_ok = 0
+        selected = []
+        for snap, evaluation in results:
+            evaluation.gates["size"] = (
+                snap.market_cap >= floor, f"{snap.market_cap / 1e8:.0f}亿",
+                f"≥{floor / 1e8:.0f}亿",
+            )
+            evaluation.gates_ok = all(
+                evaluation.gates[key][0] for key in ("earnings", "dividend", "size")
+            )
+            dividend_ok += int(evaluation.gates["dividend"][0])
+            earnings_ok += int(evaluation.gates["earnings"][0])
+            if evaluation.gates_ok:
+                selected.append((snap, evaluation))
+        self.funnel[date] = {
+            "tradable": scored, "score": len(results), "div": dividend_ok,
+            "earn": earnings_ok, "final": len(selected),
+        }
+        return selected
+
+
+FUNNEL: Dict[pd.Timestamp, dict] = {}
+
+
+def screen_all(D: pd.Timestamp, min_pass: int = 7,
+               size_quantile: float = SIZE_QUANTILE) -> List[Tuple[Snap, Eval]]:
+    screening = GrahamScreening(
+        load_universe, snapshot, evaluate, r10y, market_avg_pe_5y,
+        is_st_name, SIZE_QUANTILE,
+    )
+    out = screening.screen(D, min_pass=min_pass, size_quantile=size_quantile)
+    FUNNEL[D] = screening.funnel[D]
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
+# 回测
+# ─────────────────────────────────────────────────────────────
+
+class GrahamBacktest:
+    def __init__(self, initial_capital: float = 1_000_000.0,
+                 rank_by: str = 'margin_of_safety'):
+        self.initial_capital = initial_capital
+        # rank_by: 'margin_of_safety'= 安全边际(现状) | 'profit_trend'= 盈利趋势排序
+        self.rank_by = rank_by
+        self.cash = initial_capital
+        self.positions: Dict[str, Pos] = {}
+        self.trades: List[dict] = []
+        self.nav_curve: pd.Series = pd.Series(dtype=float)
+        self.holdings_curve: pd.Series = pd.Series(dtype=float)
+        self._snapshots: List[tuple] = []   # (date, cash, list[(code,invested,anchor,buy_price)])
+        self.periods: List[dict] = []       # 每调仓日: 仪表盘/门禁/现金/行业分布 记录
+
+    # —— 内部工具 ——
+    @staticmethod
+    def _next_trading_day(D: pd.Timestamp) -> Optional[pd.Timestamp]:
+        cal = trading_days()
+        nxt = cal[cal > D]
+        return pd.Timestamp(nxt[0]) if len(nxt) else None
+
+    @staticmethod
+    def _position_value(pos: Pos, t: pd.Timestamp) -> Tuple[float, float]:
+        """Return market value and net cash dividends using raw prices."""
+        raw = load_market(pos.code, qfq=False)
+        if raw is None:
+            return pos.invested, 0.0
+        prev = raw.index[raw.index <= t]
+        if len(prev) == 0:
+            return pos.invested, 0.0
+        shares = pos.shares
+        dividends = 0.0
+        for pay_date, dps, share_factor in corporate_actions(pos.code, pos.buy_date, t):
+            dividends += shares * dps * (1.0 - dividend_tax_rate(pos.buy_date, pay_date))
+            shares *= share_factor
+        return shares * float(raw.loc[prev[-1], 'close']), dividends
+
+    @classmethod
+    def _liquidation_value(cls, pos: Pos, t: pd.Timestamp) -> float:
+        market, dividends = cls._position_value(pos, t)
+        return market + dividends
+
+    def _mark_values(self, t: pd.Timestamp) -> Tuple[float, float]:
+        """返回 (总权益, 持仓市值)"""
+        val = self.cash
+        held = 0.0
+        for pos in self.positions.values():
+            pv, cash_div = self._position_value(pos, t)
+            val += pv + cash_div
+            held += pv
+        return val, held
+
+    def _mark(self, t: pd.Timestamp) -> float:
+        return self._mark_values(t)[0]
+
+    def _held(self, t: pd.Timestamp) -> float:
+        return self._mark_values(t)[1]
+
+    def run(self, dates: List[pd.Timestamp],
+            screening_map: Optional[Dict[pd.Timestamp, List[Snap]]] = None,
+            verbose: bool = True, end: Optional[pd.Timestamp] = None) -> Tuple[pd.Series, list, list]:
+        i = 0
+        n = len(dates)
+        while i < n:
+            signal_D = dates[i]
+            D = self._next_trading_day(signal_D)
+            if D is None:
+                break
+            # 1. 筛选 (全市场) —— 允许复用预计算结果; passed 已含防御核心条件与门禁
+            if screening_map is not None and signal_D in screening_map:
+                passed = [s for s, _ in screening_map[signal_D]]
+            else:
+                screened = screen_all(signal_D)
+                passed = [s for s, _ in screened]
+
+            passed_codes = {s.code for s in passed}
+            # 2. 卖出两档: 仍在候选 → 持有; 否则按 5/10 下限 + 门禁 判定
+            sell_specs = []
+            for code in list(self.positions.keys()):
+                if code in passed_codes:
+                    continue
+                s = snapshot(code, signal_D)
+                if not s.tradable:
+                    sell_specs.append((code, '停牌/退市/无成交'))
+                    continue
+                ev = evaluate(s, signal_D, min_pass=SELL_FLOOR, size_floor=None)
+                if ev.npass >= SELL_FLOOR and ev.gates['earnings'][0] and ev.gates['dividend'][0]:
+                    continue  # 两档: 仍通过 ≥5/10 且盈利/分红门禁达标 → 持有
+                if ev.npass < SELL_FLOOR:
+                    sell_specs.append((code, f'break {ev.npass}/10 跌破卖出下限{SELL_FLOOR}/10'))
+                else:
+                    fails = [k for k in ('earnings', 'dividend') if not ev.gates[k][0]]
+                    sell_specs.append((code, '门禁不达标: ' + '、'.join(fails)))
+
+            # 3. 执行卖出
+            for code, reason in sell_specs:
+                pos = self.positions.pop(code)
+                proceed = self._liquidation_value(pos, D)
+                fee = sell_fee(D, proceed)
+                self.cash += proceed - fee
+                self.trades.append({'date': D, 'code': pos.code, 'name': pos.name,
+                                    'action': 'sell', 'shares': pos.shares,
+                                    'price': np.nan, 'proceeds': proceed, 'fee': fee,
+                                    'reason': reason})
+
+            # 3.5 主动降仓至权益目标 (估值仪表盘真正落地的现金缓冲):
+            #   现有权益比例 > 目标 → 从"安全边际最差"的持仓开始整仓卖出, 回收现金;
+            #   与两档卖出不同, 这里不要求跌破 5/10, 只遵循"市场贵了就把仓位降下来"。
+            total_nav = self._mark(D)
+            held_val = self._mark_values(D)[1]
+            g_pct = market_gauge(signal_D)
+            eq_w = target_equity_weight(g_pct)
+            trim_value = held_val - total_nav * eq_w
+            if total_nav > 0 and trim_value > max(total_nav * 0.02, 0.0):
+                held_sorted = sorted(self.positions.items(),
+                                     key=lambda kv: (margin_of_safety_score(snapshot(kv[0], signal_D)), kv[0]))
+                for code, pos in held_sorted:
+                    if trim_value <= 0:
+                        break
+                    proceed = self._liquidation_value(pos, D)
+                    fee = sell_fee(D, proceed)
+                    self.positions.pop(code)
+                    self.cash += proceed - fee
+                    trim_value -= proceed
+                    self.trades.append({'date': D, 'code': code, 'name': pos.name,
+                                        'action': 'sell', 'shares': pos.shares,
+                                        'price': np.nan, 'proceeds': proceed, 'fee': fee,
+                                        'reason': f'主动降仓: 仪表盘高位(PE分位{g_pct:.0%}→目标{eq_w:.0%})'})
+
+            # 4. 决定买入 (等权, ≤30, 单只≤15%, 行业封顶, 估值仪表盘现金缓冲)
+            #    选股顺序: rank_by 决定 — 安全边际(现状) 或 盈利趋势(P0 改进)。
+            keep = len(self.positions)
+            budget_slots = max(0, MAX_HOLDINGS - keep)
+            total_nav = self._mark(D)
+            held_val = self._mark_values(D)[1]
+            g_pct = market_gauge(signal_D)
+            eq_w = target_equity_weight(g_pct)
+            # 现金缓冲: 权益目标 = NAV×eq_w; 高于目标已在上一步 3.5 主动降仓, 这里只约束新增买入
+            buy_budget = max(0.0, total_nav * eq_w - held_val)
+            buy_budget = min(buy_budget, self.cash)
+
+            if self.rank_by == 'profit_trend':
+                trend_rank = rank_profit_trend(list(passed))
+                def _pick_key(s):
+                    return (trend_rank.get(id(s), float('inf')), s.code)
+            else:
+                def _pick_key(s):
+                    return (margin_of_safety_score(s), s.code)
+            picks = sorted(passed, key=_pick_key)[:budget_slots]
+            ind_count = {}
+            ind_value = {}
+            for p in self.positions.values():
+                ind = industry_of(p.code)
+                ind_count[ind] = ind_count.get(ind, 0) + 1
+                ind_value[ind] = ind_value.get(ind, 0.0) + p.invested
+            if picks:
+                new_holds = []
+                budget_left = buy_budget
+                for snap_obj in picks:
+                    if budget_left <= 0:
+                        break
+                    code = snap_obj.code
+                    # Existing positions are carried forward.  Replacing the
+                    # Pos object here would erase the old shares without a
+                    # sale and falsely destroy portfolio value.
+                    if code in self.positions:
+                        continue
+                    ind = industry_of(code)
+                    if SECTOR_MAX_STOCKS > 0 and ind and ind_count.get(ind, 0) >= SECTOR_MAX_STOCKS:
+                        continue
+                    mkt = load_market(code, qfq=False)
+                    if mkt is None or D not in mkt.index:
+                        continue
+                    price = float(mkt.loc[D, 'close'])
+                    if price <= 0:
+                        continue
+                    target = min(total_nav * MAX_WEIGHT, budget_left, self.cash)
+                    if SECTOR_WEIGHT_CAP > 0 and ind:
+                        room = SECTOR_WEIGHT_CAP * total_nav - ind_value.get(ind, 0.0)
+                        if room <= 0:
+                            continue
+                        target = min(target, room)
+                    shares = int(target / price / 100) * 100
+                    if shares <= 0:
+                        continue
+                    amount = shares * price
+                    fee = buy_fee(amount)
+                    if amount + fee > self.cash:
+                        shares = int((self.cash - fee) / price / 100) * 100
+                        amount = shares * price
+                        fee = buy_fee(amount)
+                    if shares <= 0 or amount + fee > self.cash or amount > budget_left:
+                        continue
+                    self.cash -= amount + fee
+                    uname = name_of(code)
+                    pos = Pos(code=code, name=uname, shares=shares,
+                              buy_price=price, invested=amount,
+                              anchor_qfq=price, buy_date=D)
+                    self.positions[code] = pos
+                    new_holds.append(pos)
+                    ind_count[ind] = ind_count.get(ind, 0) + 1
+                    ind_value[ind] = ind_value.get(ind, 0.0) + amount
+                    budget_left -= amount
+                    self.trades.append({'date': D, 'code': code, 'name': uname,
+                                        'action': 'buy', 'shares': shares,
+                                        'price': price, 'proceeds': amount, 'fee': fee,
+                                        'reason': '通过防御核心条件+硬门禁, 安全边际优先/行业封顶'})
+            # 记录本调仓日之后的账户状态 (用于日度净值 + 防御性报表)
+            snap = list(self.positions.values())
+            self._snapshots.append((D, self.cash, snap))
+            indw = {k: v for k, v in ind_value.items() if v > 0}
+            self.periods.append({'date': D, 'signal_date': signal_D, 'gauge': g_pct, 'eq_target': eq_w,
+                                 'candidates': len(passed), 'cash': self.cash,
+                                 'industry': indw})
+            if verbose:
+                print(f'  {D.date()} 候选{len(passed)} 目标权益{eq_w:.0%} '
+                      f'现金缓冲后买入{len(new_holds) if picks else 0}只')
+            i += 1
+
+        # 5. 日度净值 (按调仓日之间的持仓/现金快照右续)
+        cal = trading_days()
+        first_exec = self._next_trading_day(dates[0]) if dates else None
+        last_day = pd.Timestamp(end) if end is not None else pd.Timestamp(END)
+        cal = cal[(cal >= (first_exec or dates[0])) & (cal <= last_day)]
+        rows = {}
+        hrows = {}
+        si = 0
+        n_snap = len(self._snapshots)
+        for t0 in cal:
+            while si + 1 < n_snap and self._snapshots[si + 1][0] <= t0:
+                si += 1
+            _, cash, poses = self._snapshots[si]
+            val = cash
+            held = 0.0
+            for pos in poses:
+                pv, cash_div = self._position_value(pos, t0)
+                val += pv + cash_div
+                held += pv
+            rows[t0] = val
+            hrows[t0] = held
+        self.nav_curve = pd.Series(rows)
+        self.holdings_curve = pd.Series(hrows)
+        return self.nav_curve, self.trades, dates
+
+
+if __name__ == '__main__':
+    print('module ok')
