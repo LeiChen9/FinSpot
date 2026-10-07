@@ -34,6 +34,7 @@ from strategy.graham_strategy import (   # noqa: F401  复用本地缓存/口径
     load_10y, load_all_a_pe, load_index, trading_days, rebalance_dates,
     snapshot, _name_of, _industry_of, buy_fee, sell_fee, perf_metrics,
 )
+from strategy.graham_universe_view import is_st_name
 
 N_HOLDINGS = 30                      # 组合只数 (等权)
 EXCLUDE_INDUSTRIES = {'金融行业', '房地产'}   # 高杠杆/盈利不可持续 → ROE/E/P 失真的行业
@@ -84,8 +85,7 @@ def listing_proxy_years(code: str, D: pd.Timestamp) -> Optional[float]:
     return (D - first).days / 365.25
 
 
-def is_st(name: str) -> bool:
-    return bool(name and 'ST' in str(name).upper())
+is_st = is_st_name
 
 
 FUNNEL_MF: Dict[pd.Timestamp, dict] = {}   # 每次全市场扫描后记录的初选池漏斗
