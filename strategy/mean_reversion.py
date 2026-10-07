@@ -22,6 +22,7 @@ from strategy.mean_reversion_rules import (
     rolling_ma120_vol, target_weight,
 )
 from strategy.trading_costs import COMMISSION, SLIPPAGE, STAMP_TAX
+from strategy.calendar import market_days
 
 MA_VOL_KEEP = 0.5              # 取低波动前 50%
 LOT = 100
@@ -58,8 +59,7 @@ class MeanReversionBacktest:
         self.trades = []
         self._equity: List[dict] = []
 
-        all_days = sorted({d for df in self.market_data.values() for d in df.index})
-        all_days = [d for d in all_days if start <= d <= end]
+        all_days = market_days(self.market_data, start, end)
         rb_dates = make_rebalance_dates(all_days, start, end, self.rebalance_step)
         rb_set = set(rb_dates)
 

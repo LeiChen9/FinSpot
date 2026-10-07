@@ -57,6 +57,10 @@ from strategy.graham_calendar import (
 from strategy.graham_universe_view import UniverseView, is_st_name
 from strategy.graham_screening import GrahamScreening
 from analysis.performance import perf_metrics as _perf_metrics
+from strategy.graham_trading import Position as _Position
+from strategy.graham_trading import buy_fee as _buy_fee
+from strategy.graham_trading import sell_fee as _sell_fee
+from strategy.graham_trading import stamp_tax as _stamp_tax
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -339,28 +343,20 @@ def rebalance_dates() -> List[pd.Timestamp]:
 # 回测
 # ─────────────────────────────────────────────────────────────
 
-@dataclass
-class Pos:
-    code: str
-    name: str
-    shares: float
-    buy_price: float
-    invested: float          # 买入毛资金 (不含费)
-    anchor_qfq: float        # legacy field; raw-price valuation no longer uses qfq
-    buy_date: pd.Timestamp
+Pos = _Position
 
 
 def stamp_tax(D: pd.Timestamp) -> float:
-    return STAMP_TAX_LO if D >= STAMP_CUTOFF else STAMP_TAX_HI
+    return _stamp_tax(D, STAMP_CUTOFF, STAMP_TAX_HI, STAMP_TAX_LO)
 
 
 def buy_fee(amount: float) -> float:
-    return max(amount * COMMISSION, COMMISSION_MIN) + amount * TRANSFER_FEE
+    return _buy_fee(amount, COMMISSION, COMMISSION_MIN, TRANSFER_FEE)
 
 
 def sell_fee(D: pd.Timestamp, amount: float) -> float:
-    return (max(amount * COMMISSION, COMMISSION_MIN)
-            + amount * TRANSFER_FEE + amount * stamp_tax(D))
+    return _sell_fee(D, amount, COMMISSION, COMMISSION_MIN, TRANSFER_FEE,
+                     STAMP_CUTOFF, STAMP_TAX_HI, STAMP_TAX_LO)
 
 
 FUNNEL: Dict[pd.Timestamp, dict] = {}

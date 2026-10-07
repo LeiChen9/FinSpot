@@ -37,6 +37,7 @@ from strategy.graham_strategy import (   # noqa: F401  复用本地缓存/口径
 from strategy.graham_universe_view import is_st_name
 from strategy.magic_factors import listing_proxy_years as _listing_proxy_years
 from strategy.magic_factors import rank_magic_candidates
+from strategy.graham_trading import Position as _Position
 
 N_HOLDINGS = 30                      # 组合只数 (等权)
 EXCLUDE_INDUSTRIES = {'金融行业', '房地产'}   # 高杠杆/盈利不可持续 → ROE/E/P 失真的行业
@@ -179,15 +180,7 @@ def build_ranking_map(dates: List[pd.Timestamp], n: int = N_HOLDINGS,
 # 回测器 (独立简版: 季度全换, 无两档卖出/降仓/行业封顶)
 # ─────────────────────────────────────────────────────────────
 
-@dataclass
-class MPos:
-    code: str
-    name: str
-    shares: float
-    buy_price: float
-    invested: float
-    anchor_qfq: float
-    buy_date: pd.Timestamp
+MPos = _Position
 
 
 class MagicBacktest:

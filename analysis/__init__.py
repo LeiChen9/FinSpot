@@ -24,3 +24,8 @@ from analysis.backtest import (
     first_trading_day, scheduled_rebalance_dates, fixed_weight_history,
     holdings_frame, turnover_summary, fifo_pnl,
 )
+"""Backtest and performance analysis domains."""
+
+from analysis.rebalance import fixed_weight_history, scheduled_rebalance_dates
+
+__all__ = ['fixed_weight_history', 'scheduled_rebalance_dates']

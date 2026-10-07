@@ -24,6 +24,7 @@ from screener.pool_data import (
     dividend_yield, eps_ttm, pe_ttm, raw_close,
     ttm_eps_fin as _ttm_eps_fin, ttm_eps_profit_balance as _ttm_eps_profit_balance,
 )
+from screener.signal_cache import SignalFrameCache
 
 # ── 股票池 (28 只 A 股; 远东宏信/巨子生物为港股, 无本地数据, 剔除) ──
 POOL: Dict[str, str] = {
@@ -43,7 +44,7 @@ POOL: Dict[str, str] = {
 }
 
 # 预计算信号序列缓存 (按日索引, 避免回测中逐日重算)
-_SIGNAL_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
+_SIGNAL_CACHE = SignalFrameCache()
 
 
 # ── 收盘价 (不复权, 仅 D 日有成交时返回) ──
@@ -151,14 +152,13 @@ def build_pool_screener(div_min: float = 0.03, pe_max: float = 20.0,
 # ── 预计算信号序列 (每日索引, 回测用; 一次构建, 全程查表) ──
 def signal_frame(code: str) -> Optional[pd.DataFrame]:
     """返回该股逐日 DataFrame: index=交易日, columns=[div_yield,pe_ttm,dev,vol120]"""
-    if code in _SIGNAL_CACHE:
-        return _SIGNAL_CACHE[code]
+    if _SIGNAL_CACHE.contains(code):
+        return _SIGNAL_CACHE.get(code)
 
     q = load_qfq(code)
     raw = load_raw(code)
     if q is None or q.empty:
-        _SIGNAL_CACHE[code] = None
-        return None
+        return _SIGNAL_CACHE.put(code, None)
     days = q.index
     out = pd.DataFrame(index=days)
 
@@ -197,8 +197,7 @@ def signal_frame(code: str) -> Optional[pd.DataFrame]:
     ret = q['close'].pct_change()
     out['vol120'] = ret.rolling(120).std() * np.sqrt(252)
 
-    _SIGNAL_CACHE[code] = out
-    return out
+    return _SIGNAL_CACHE.put(code, out)
 
 
 def _eps_ttm_series(code: str, days: pd.DatetimeIndex) -> pd.Series:

@@ -21,6 +21,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 from strategy.trading_costs import COMMISSION, MIN_FEE, SLIPPAGE, STAMP_TAX
+from strategy.calendar import market_days
 
 MA_WINDOW = 120
 LOT = 100
@@ -64,8 +65,7 @@ class BandBacktest:
         self.weights_history = []
         self._equity = []
 
-        all_days = sorted({d for df in self.market_data.values() for d in df.index})
-        all_days = [d for d in all_days if start <= d <= end]
+        all_days = market_days(self.market_data, start, end)
 
         for day in all_days:
             self._daily(day)
