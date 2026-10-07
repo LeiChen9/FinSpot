@@ -1,6 +1,6 @@
 """风险管理：止盈 / 止损 / 追踪止盈 / 趋势追踪"""
 from typing import Optional
-from strategy.portfolio import Holding
+from backtest.portfolio import Holding
 
 
 class RiskManager:

@@ -17,11 +17,11 @@ import pandas as pd
 from screener.graham import GrahamScreener
 from applications.backtests import benchmark_nav
 from data.local import load_market_frames
-from strategy.mean_reversion import (
+from backtest.mean_reversion import (
     MeanReversionBacktest,
     rolling_ma120_vol,
 )
-from strategy.multifactor import perf_summary
+from backtest.multifactor import perf_summary
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 START = pd.Timestamp('2023-01-01')

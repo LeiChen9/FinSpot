@@ -1,4 +1,4 @@
-from strategy.portfolio import Portfolio
+from backtest.portfolio import Portfolio
 
 
 def test_sell_applies_commission_and_stamp_tax():

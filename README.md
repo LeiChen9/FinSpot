@@ -10,7 +10,8 @@
 ## Layout
 
 - `data/`: 本地数据源、缓存与数据准备管线
-- `strategy/`: 策略规则、信号、交易执行与组合净值
+- `strategy/`: 策略规则、信号、因子和筛选逻辑
+- `backtest/`: 唯一的回测执行、组合、交易成本和回测结果域
 - `screener/`: point-in-time 股票池与基本面筛选
 - `analysis/`: 回测、绩效、风险和归因分析
 - `notebooks/`: 研究入口与结果复核

@@ -11,7 +11,7 @@ import pandas as pd
 from analysis.graham_market import market_avg_pe_5y, r10y
 
 if TYPE_CHECKING:
-    from strategy.graham_strategy import Snap
+    from backtest.graham import Snap
 
 COND_NAMES = [
     ('c1', '收益价格比 ≥ 2×AAA'),

@@ -11,7 +11,7 @@ from typing import Dict, Optional
 
 import pandas as pd
 
-from strategy.portfolio import Portfolio
+from backtest.portfolio import Portfolio
 
 
 class DonchianValueStrategy:

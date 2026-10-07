@@ -16,8 +16,8 @@ import pandas as pd
 
 from screener.pool_screener import POOL, build_pool_screener, load_qfq, load_raw
 from applications.backtests import benchmark_nav
-from strategy.band_backtest import BandBacktest
-from strategy.multifactor import perf_summary
+from backtest.band import BandBacktest
+from backtest.multifactor import perf_summary
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 START = pd.Timestamp('2023-01-01')

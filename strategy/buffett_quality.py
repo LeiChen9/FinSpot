@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from strategy.graham_strategy import (
+from backtest.graham import (
     END, Pos, SIZE_QUANTILE, _industry_of, buy_fee, is_st_name, load_market,
     load_universe, sell_fee, snapshot, trading_days, GrahamBacktest,
 )
