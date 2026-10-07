@@ -56,6 +56,7 @@ from strategy.graham_calendar import (
 )
 from strategy.graham_universe_view import UniverseView, is_st_name
 from strategy.graham_screening import GrahamScreening
+from analysis.performance import perf_metrics as _perf_metrics
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -625,20 +626,7 @@ class GrahamBacktest:
 # 绩效口径
 # ─────────────────────────────────────────────────────────────
 
-def perf_metrics(nav: pd.Series, rf=0.02) -> dict:
-    if len(nav) < 20:
-        return {}
-    rel = nav / nav.iloc[0]                       # 归一化 (nav 可为绝对金额)
-    daily = rel.pct_change().dropna()
-    years = max((rel.index[-1] - rel.index[0]).days / 365.25, 1 / 365.25)
-    ann = rel.iloc[-1] ** (1 / years) - 1
-    vol = daily.std() * np.sqrt(252)
-    sharpe = (ann - rf) / vol if vol > 0 else 0.0
-    dd = (rel / rel.expanding().max() - 1).min()
-    win = (daily > 0).mean()
-    return {'total_return': rel.iloc[-1] - 1, 'annual_return': ann,
-            'annual_vol': vol, 'sharpe': sharpe, 'max_drawdown': dd,
-            'win_rate': win, 'trading_days': len(daily)}
+perf_metrics = _perf_metrics
 
 
 if __name__ == '__main__':
