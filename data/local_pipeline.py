@@ -11,7 +11,6 @@
 幂等: 已存在且满足新鲜度条件的文件跳过, 可断点续跑。
 """
 import argparse
-import json
 import os
 import sys
 import time
@@ -19,6 +18,12 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import pandas as pd
+from data.local_market import fetch_market_qfq
+from data.local_universe import build_universe as _build_universe
+from data.local_universe import load_universe as _load_universe
+from data.local_fundamentals import fetch_financial_ths
+from data.local_fundamentals import stage_dividend as _stage_dividend
+from data.local_fundamentals import stage_financial as _stage_financial
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 META_DIR = os.path.join(DATA_DIR, 'meta')
@@ -37,85 +42,11 @@ def ensure_dirs():
 
 
 def load_universe() -> list:
-    """获取 沪深300 ∪ 中证红利 当前成分并集"""
-    import akshare as ak
-    codes = []
-    for idx in UNIVERSE_IDX:
-        for attempt in range(3):
-            try:
-                df = ak.index_stock_cons(symbol=idx)
-                codes.extend(df['品种代码'].astype(str).str.zfill(6).tolist())
-                print(f'   [√] {idx} 成分 {len(df)} 只')
-                break
-            except Exception as e:
-                print(f'   [x] {idx} 第{attempt+1}次失败: {e}')
-                time.sleep(2)
-    codes = sorted(set(codes))
-    os.makedirs(META_DIR, exist_ok=True)
-    pd.DataFrame({'code': codes}).to_csv(os.path.join(META_DIR, 'universe.csv'), index=False)
-    print(f'   并集共 {len(codes)} 只')
-    return codes
+    return _build_universe(META_DIR, UNIVERSE_IDX)
 
 
 def get_universe() -> list:
-    path = os.path.join(META_DIR, 'universe.csv')
-    if os.path.exists(path):
-        codes = pd.read_csv(path, dtype={'code': str})['code'].astype(str).str.zfill(6).tolist()
-        return codes
-    raise RuntimeError('先运行 --stage constituents')
-
-
-QQ_URL = 'https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get'
-QQ_HEADERS = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://gu.qq.com/'}
-
-
-def _qq_fetch(ticker: str, end: str) -> list:
-    """一次 QQ qfq 请求(按截止日取 800 根), 返回 [date,open,close,high,low,volume] 行列表"""
-    import subprocess
-    param = f'{ticker},day,2020-01-01,{end},800,qfq'
-    out = subprocess.run(
-        ['curl', '-s', '--max-time', '20', '-G', QQ_URL,
-         '--data-urlencode', '_var=kline_dayqfq',
-         '--data-urlencode', f'param={param}',
-         '--data-urlencode', 'r=0.1'],
-        capture_output=True, text=True,
-    ).stdout
-    js = json.loads(out[out.find('{'):out.rfind('}') + 1])
-    d = js.get('data', {}).get(ticker, {})
-    if isinstance(d, list):
-        return []
-    return d.get('qfqday') or d.get('day') or []
-
-
-def fetch_market_qfq(code: str, is_etf: bool = False) -> pd.DataFrame | None:
-    """QQ 前复权全历史 (按 end 日期 3 段 800 根拼接, 同锚点)"""
-    ticker = f'sh{code}' if code.startswith(('6', '5', '9')) else f'sz{code}'
-    for attempt in range(3):
-        try:
-            segs = [_qq_fetch(ticker, e) for e in ('2022-06-30', '2024-06-30', MARKET_END)]
-            if not any(segs):
-                return None
-            merged = {}
-            for rows in segs:
-                for r in rows:
-                    merged[r[0]] = [r[1], r[2], r[3], r[4], r[5]]
-            dates = sorted(merged)
-            if len(dates) < 200:
-                return None
-            df = pd.DataFrame(
-                [[d] + merged[d] for d in dates],
-                columns=['date', 'open', 'high', 'low', 'close', 'volume'],
-            )
-            df['date'] = pd.to_datetime(df['date'])
-            for c in ['open', 'high', 'low', 'close', 'volume']:
-                df[c] = pd.to_numeric(df[c], errors='coerce')
-            df = df.dropna(subset=['close'])
-            df = df.set_index('date').sort_index()
-            return df
-        except Exception as e:
-            print(f'        (第{attempt+1}次失败: {e})')
-            time.sleep(2 * (attempt + 1))
-    return None
+    return _load_universe(META_DIR)
 
 
 def stage_market(codes: list):
@@ -143,53 +74,12 @@ def stage_market(codes: list):
     print('   [√] 行情刷新完成')
 
 
-def fetch_financial_ths(code: str) -> pd.DataFrame | None:
-    import akshare as ak
-    df = ak.stock_financial_abstract(symbol=code)
-    if df is None or df.empty:
-        return None
-    return df
-
-
 def stage_financial(codes: list):
-    for i, code in enumerate(codes):
-        path = os.path.join(FIN_DIR, f'{code}_fin.csv')
-        need = True
-        if os.path.exists(path):
-            df = pd.read_csv(path, nrows=1)
-            need = not any(c.startswith('2025') for c in df.columns)
-        if not need:
-            continue
-        try:
-            df = fetch_financial_ths(code)
-            if df is None or df.empty:
-                print(f'   [x] {code}: 无摘要')
-                continue
-            df.to_csv(path, index=False)
-            print(f'   [{i+1}/{len(codes)}] {code}: {df.shape}')
-        except Exception as e:
-            print(f'   [x] {code}: {e}')
-        time.sleep(0.3)
-    print('   [√] 财务摘要完成')
+    return _stage_financial(codes, FIN_DIR)
 
 
 def stage_dividend(codes: list):
-    import akshare as ak
-    for i, code in enumerate(codes):
-        path = os.path.join(DIV_DIR, f'{code}_dividend.csv')
-        if os.path.exists(path):
-            continue
-        try:
-            df = ak.stock_dividend_cninfo(symbol=code)
-            if df is None or df.empty:
-                print(f'   [x] {code}: 无分红记录')
-                continue
-            df.to_csv(path, index=False)
-            print(f'   [{i+1}/{len(codes)}] {code}: {len(df)} 条')
-        except Exception as e:
-            print(f'   [x] {code}: {e}')
-        time.sleep(0.3)
-    print('   [√] 分红数据完成')
+    return _stage_dividend(codes, DIV_DIR)
 
 
 def stage_benchmark():
