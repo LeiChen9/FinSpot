@@ -8,13 +8,13 @@ Grinold & Kahn 主动投资框架:
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Callable
-from datetime import datetime
 from analysis.performance import nav_summary
 from data.financial import FinancialDataLoader
 from strategy.factors import PRICE_FACTORS
 from strategy.fundamental_factors import FINANCIAL_FACTORS
 from strategy.model_types import BacktestResult, PeriodSnapshot
 from strategy.factor_model import FactorModel as CanonicalFactorModel
+from strategy.portfolio_nav import build_nav_from_weights
 
 ALL_FACTORS = PRICE_FACTORS + FINANCIAL_FACTORS
 
@@ -137,73 +137,9 @@ class MultiFactorBacktest:
         return result
 
     def _build_daily_nav(self, weights_history: List[dict],
-                          all_market: Dict[str, pd.DataFrame]) -> pd.Series:
-        if not weights_history:
-            return pd.Series()
-
-        all_dates = sorted(set(
-            d for df in all_market.values() for d in df.index
-        ))
-
-        shares: Dict[str, float] = {}
-        nav_value = 1.0
-        result = []
-
-        rebalance_map = {}
-        for e in weights_history:
-            rebalance_map[e['date']] = e['weights']
-
-        for d in all_dates:
-            dt = datetime(d.year, d.month, d.day)
-
-            if dt in rebalance_map:
-                w = rebalance_map[dt]
-                # Compute NAV from old shares before rebalancing
-                if shares:
-                    total = 0.0
-                    for s, sh in shares.items():
-                        df = all_market.get(s)
-                        if df is not None and d in df.index:
-                            total += sh * df.loc[d, 'close']
-                    if total > 0:
-                        nav_value = total
-                # Record rebalance-day NAV using old (or initial) value
-                result.append({'date': dt, 'nav': nav_value})
-                # Build new shares; skip stocks without price data and renormalize
-                new_shares = {}
-                total_weight = 0.0
-                for s, wi in w.items():
-                    if wi <= 0:
-                        continue
-                    df = all_market.get(s)
-                    if df is not None and d in df.index:
-                        price = float(df.loc[d, 'close'])
-                        if price > 0:
-                            new_shares[s] = wi / price
-                            total_weight += wi
-                if new_shares and total_weight > 0:
-                    for s in new_shares:
-                        new_shares[s] = (new_shares[s] / total_weight) * nav_value
-                shares = new_shares
-                continue
-
-            if not shares:
-                continue
-
-            total = 0.0
-            for s, sh in shares.items():
-                df = all_market.get(s)
-                if df is not None and d in df.index:
-                    total += sh * float(df.loc[d, 'close'])
-            if total > 0:
-                result.append({'date': dt, 'nav': total})
-
-        if not result:
-            return pd.Series()
-
-        df = pd.DataFrame(result).set_index('date')
-        df['nav'] = df['nav'] / df['nav'].iloc[0]
-        return df['nav']
+                         all_market: Dict[str, pd.DataFrame]) -> pd.Series:
+        nav, _ = build_nav_from_weights(weights_history, all_market)
+        return nav
 
 
 # ─── 绩效评估 ───
