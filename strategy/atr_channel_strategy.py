@@ -6,6 +6,8 @@ from strategy.portfolio import Portfolio, Holding
 from strategy.signals import ATRChannelBreakoutSignal
 from indicators.technical import atr, keltner_channel
 from strategy.atr_risk import should_add
+from strategy.position_sizing import capped_add_amount, initial_amount
+from strategy.calendar import market_days
 
 
 class ATRChannelStrategy:
@@ -61,7 +63,7 @@ class ATRChannelStrategy:
     def _calculate_position_size(self, code: str, price: float, current_nav: float) -> float:
         """计算买入金额"""
         # 计算初始头寸金额
-        initial_amount = current_nav * self.initial_position_pct
+        amount = initial_amount(current_nav, self.initial_position_pct)
 
         # 检查是否超过最大持仓
         current_holding = self.portfolio.holdings.get(code)
@@ -71,7 +73,7 @@ class ATRChannelStrategy:
             if current_value >= max_value:
                 return 0.0
 
-        return initial_amount
+        return amount
 
     def _calculate_add_position_size(self, code: str, price: float, current_nav: float) -> float:
         """计算加仓金额"""
@@ -80,16 +82,11 @@ class ATRChannelStrategy:
             return 0.0
 
         # 计算加仓金额（相对于初始头寸）
-        initial_amount = current_nav * self.initial_position_pct
-        add_amount = initial_amount * self.add_position_pct
-
-        # 检查是否超过最大持仓
         current_value = current_holding.market_value
-        max_value = current_nav * self.max_position_pct
-        if current_value + add_amount > max_value:
-            add_amount = max_value - current_value
-
-        return add_amount
+        return capped_add_amount(current_nav, current_value,
+                                 self.initial_position_pct,
+                                 self.add_position_pct,
+                                 self.max_position_pct)
 
     def _should_add_position(self, code: str, current_price: float, entry_price: float, atr_value: float) -> bool:
         """判断是否应该加仓"""
@@ -117,11 +114,7 @@ class ATRChannelStrategy:
         end = pd.Timestamp(end_date)
 
         # 获取所有交易日
-        all_dates = sorted(set(
-            d for df in market_data.values()
-            for d in df.index
-        ))
-        trading_days = [d for d in all_dates if start <= d <= end]
+        trading_days = market_days(market_data, start, end)
 
         if not trading_days:
             raise ValueError("没有交易日数据")

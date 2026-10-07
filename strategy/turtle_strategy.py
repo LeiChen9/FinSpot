@@ -6,6 +6,7 @@ from strategy.portfolio import Portfolio, Holding
 from strategy.signals import TurtleSignal
 from indicators.technical import atr
 from strategy.atr_risk import should_add, trailing_stop, unit_size
+from strategy.calendar import market_days
 
 
 class TurtleStrategy:
@@ -117,11 +118,7 @@ class TurtleStrategy:
         end = pd.Timestamp(end_date)
 
         # 获取所有交易日
-        all_dates = sorted(set(
-            d for df in market_data.values()
-            for d in df.index
-        ))
-        trading_days = [d for d in all_dates if start <= d <= end]
+        trading_days = market_days(market_data, start, end)
 
         if not trading_days:
             raise ValueError("没有交易日数据")

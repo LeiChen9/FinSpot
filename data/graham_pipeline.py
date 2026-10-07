@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from data.graham_industry import fetch_industry as _fetch_industry
 from data.graham_macro_fetch import fetch_macro as _fetch_macro
 from data.graham_market_fetch import fetch_market_history as _fetch_market_tolerated
+from data.graham_pipeline_utils import exchange_of, parse_ymd, slice_sina_report, symbol_sina
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -53,39 +54,6 @@ def log(msg):
 # ─────────────────────────────────────────────────────────────
 # 工具
 # ─────────────────────────────────────────────────────────────
-
-def exchange_of(code: str) -> str:
-    if code[0] in ('6', '9'):
-        return 'sh'
-    if code[0] in ('4', '8') or code.startswith('92'):
-        return 'bj'
-    return 'sz'
-
-
-def symbol_sina(code: str) -> str:
-    return f'{exchange_of(code)}{code}'
-
-
-def parse_ymd(s) -> pd.Timestamp:
-    try:
-        return pd.to_datetime(str(int(s)), format='%Y%m%d', errors='coerce')
-    except Exception:
-        return pd.NaT
-
-
-def slice_sina_report(df: pd.DataFrame, keep_cols: list) -> pd.DataFrame:
-    """sina 报表 → (报告日, 公告日期, keep_cols) 长表, 数值转 float; 缺失科目=NaN"""
-    out = pd.DataFrame({'报告日': df['报告日'], '公告日期': df['公告日期']})
-    for c in keep_cols:
-        if c in df.columns:
-            out[c] = pd.to_numeric(df[c], errors='coerce')
-        else:
-            out[c] = np.nan  # 银行等特殊行业缺科目 → NaN, 由筛选层判为不满足
-    out['报告日'] = out['报告日'].map(parse_ymd)
-    out['公告日期'] = out['公告日期'].map(parse_ymd)
-    out = out.dropna(subset=['报告日']).sort_values('报告日')
-    return out
-
 
 # ─────────────────────────────────────────────────────────────
 # 清单

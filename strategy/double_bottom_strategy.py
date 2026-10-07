@@ -4,6 +4,8 @@ import numpy as np
 from typing import Dict, List, Optional
 from strategy.portfolio import Portfolio
 from strategy.double_bottom_signals import detect_double_bottom, find_pivots
+from strategy.position_sizing import whole_lot_shares
+from strategy.calendar import market_days
 
 
 class DoubleBottomStrategy:
@@ -82,15 +84,14 @@ class DoubleBottomStrategy:
     def _calculate_position_size(self, price: float, current_nav: float) -> int:
         """计算买入股数（100股整数倍）"""
         amount = current_nav * self.initial_position_pct
-        shares = int(amount / price / 100) * 100
-        max_shares = int(current_nav * self.max_position_pct / price / 100) * 100
+        shares = whole_lot_shares(amount, price)
+        max_shares = whole_lot_shares(current_nav * self.max_position_pct, price)
         return min(shares, max_shares)
 
     def _calculate_add_size(self, price: float, current_nav: float) -> int:
         """计算加仓股数"""
         amount = current_nav * self.initial_position_pct * self.add_position_pct
-        shares = int(amount / price / 100) * 100
-        return shares
+        return whole_lot_shares(amount, price)
 
     def _should_add(self, code: str, current_price: float) -> bool:
         """判断是否应该加仓"""
@@ -117,11 +118,7 @@ class DoubleBottomStrategy:
         start = pd.Timestamp(start_date)
         end = pd.Timestamp(end_date)
 
-        all_dates = sorted(set(
-            d for df in market_data.values()
-            for d in df.index
-        ))
-        trading_days = [d for d in all_dates if start <= d <= end]
+        trading_days = market_days(market_data, start, end)
 
         if not trading_days:
             raise ValueError("没有交易日数据")
