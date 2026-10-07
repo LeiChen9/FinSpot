@@ -54,6 +54,7 @@ from strategy.graham_calendar import (
     rebalance_dates as _rebalance_dates,
     trading_days as _trading_days,
 )
+from strategy.graham_universe_view import UniverseView, is_st_name
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -147,41 +148,9 @@ def _close_at(df, at: pd.Timestamp) -> float:
     return float(df.loc[prev[-1], 'close'])
 
 
-_name_cache: Optional[Dict[str, str]] = None
-
-
-def _name_of(code: str) -> str:
-    global _name_cache
-    if _name_cache is None:
-        u = load_universe()
-        _name_cache = dict(zip(u['code'], u['name']))
-    return _name_cache.get(code, code)
-
-
-def is_st_name(name: str) -> bool:
-    """Conservative fallback for the cached security name.
-
-    The local universe does not retain historical name changes, so this cannot
-    certify a historical ST state; it does prevent a currently labelled ST
-    security from entering a defensive portfolio.
-    """
-    return bool(name and 'ST' in str(name).upper())
-
-
-_industry_cache: Optional[Dict[str, str]] = None
-
-
-def _industry_of(code: str) -> str:
-    """申万一级行业 (以东方财富行业板块近似, 见 scripts/graham_data.py fetch-industry)。
-    缺失时返回空串, 视为不参与行业封顶。"""
-    global _industry_cache
-    if _industry_cache is None:
-        u = load_universe()
-        _industry_cache = {}
-        if 'industry' in u.columns:
-            for c, ind in zip(u['code'], u['industry'].fillna('')):
-                _industry_cache[str(c)] = str(ind)
-    return _industry_cache.get(code, '')
+_universe_view = UniverseView(load_universe)
+_name_of = _universe_view.name_of
+_industry_of = _universe_view.industry_of
 
 
 def snapshot(code: str, D: pd.Timestamp, bal=None, pro=None, div=None,
