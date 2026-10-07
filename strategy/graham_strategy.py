@@ -55,6 +55,7 @@ from strategy.graham_calendar import (
     trading_days as _trading_days,
 )
 from strategy.graham_universe_view import UniverseView, is_st_name
+from strategy.graham_screening import GrahamScreening
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -361,52 +362,17 @@ def sell_fee(D: pd.Timestamp, amount: float) -> float:
             + amount * TRANSFER_FEE + amount * stamp_tax(D))
 
 
-FUNNEL: Dict[pd.Timestamp, dict] = {}   # screen_all 每次全市场扫描后记录门禁漏斗
+FUNNEL: Dict[pd.Timestamp, dict] = {}
 
 
 def screen_all(D: pd.Timestamp, min_pass: int = 7,
                size_quantile: float = SIZE_QUANTILE) -> List[Tuple[Snap, Eval]]:
-    uni = load_universe()
-    r = r10y(D)
-    mpe = market_avg_pe_5y(D)
-    results = []
-    caps = []
-    scored = 0
-    for code in uni['code']:
-        s = snapshot(code, D)
-        if not s.tradable:
-            continue
-        if is_st_name(s.name):
-            continue
-        # Missing industry labels cannot be allowed to bypass concentration caps.
-        if not s.industry:
-            continue
-        if not np.isfinite(s.market_cap) or s.market_cap <= 0:
-            continue
-        scored += 1
-        ev = evaluate(s, D, r=r, mpe=mpe, min_pass=min_pass, size_floor=None)
-        caps.append(float(s.market_cap))
-        if ev.passed:
-            results.append((s, ev))
-    # 市值分位下限 (当日全A可交易样本)
-    if caps:
-        floor = float(pd.Series(caps).quantile(size_quantile))
-    else:
-        floor = np.inf
-    score_ok = len(results)
-    div_ok = ear_ok = 0
-    out = []
-    for s, ev in results:
-        ev.gates['size'] = (s.market_cap >= floor, f'{s.market_cap/1e8:.0f}亿',
-                            f'≥{floor/1e8:.0f}亿')
-        ev.gates_ok = bool(ev.gates['earnings'][0] and ev.gates['dividend'][0]
-                           and ev.gates['size'][0])
-        div_ok += int(ev.gates['dividend'][0])
-        ear_ok += int(ev.gates['earnings'][0])
-        if ev.gates_ok:
-            out.append((s, ev))
-    FUNNEL[D] = {'tradable': scored, 'score': score_ok, 'div': div_ok,
-                 'earn': ear_ok, 'final': len(out)}
+    screening = GrahamScreening(
+        load_universe, snapshot, evaluate, r10y, market_avg_pe_5y,
+        is_st_name, SIZE_QUANTILE,
+    )
+    out = screening.screen(D, min_pass=min_pass, size_quantile=size_quantile)
+    FUNNEL[D] = screening.funnel[D]
     return out
 
 
