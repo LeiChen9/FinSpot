@@ -20,6 +20,10 @@ import pandas as pd
 from data.pool import (
     load_balance, load_dividend, load_fin_summary, load_profit, load_qfq, load_raw,
 )
+from screener.pool_data import (
+    dividend_yield, eps_ttm, pe_ttm, raw_close,
+    ttm_eps_fin as _ttm_eps_fin, ttm_eps_profit_balance as _ttm_eps_profit_balance,
+)
 
 # ── 股票池 (28 只 A 股; 远东宏信/巨子生物为港股, 无本地数据, 剔除) ──
 POOL: Dict[str, str] = {
@@ -43,114 +47,6 @@ _SIGNAL_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
 
 
 # ── 收盘价 (不复权, 仅 D 日有成交时返回) ──
-def raw_close(code: str, as_of: pd.Timestamp) -> Optional[float]:
-    df = load_raw(code)
-    if df is None or df.empty:
-        return None
-    hist = df[df.index <= pd.Timestamp(as_of)]
-    if hist.empty:
-        return None
-    return float(hist['close'].iloc[-1])
-
-
-# ── 股息率 (point-in-time, 18 个月内有效) ──
-def dividend_yield(code: str, as_of: pd.Timestamp) -> Optional[float]:
-    df = load_dividend(code)
-    if df is None or '实施方案公告日期' not in df.columns:
-        return None
-    as_of = pd.Timestamp(as_of)
-    ann = df[pd.to_datetime(df['实施方案公告日期'], errors='coerce').notna()].copy()
-    ann['公告日'] = pd.to_datetime(ann['实施方案公告日期'], errors='coerce')
-    ann['派息比例'] = pd.to_numeric(ann['派息比例'], errors='coerce')
-    annual = ann[(ann['公告日'] <= as_of)
-                 & ann['报告时间'].astype(str).str.endswith('年报')
-                 & (ann['派息比例'].notna()) & (ann['派息比例'] > 0)]
-    if annual.empty:
-        return None
-    latest = annual.sort_values('公告日').iloc[-1]
-    if latest['公告日'] < as_of - pd.Timedelta(days=550):
-        return None
-    dps = latest['派息比例'] / 10.0
-    price = raw_close(code, as_of)
-    if price is None or price <= 0:
-        return None
-    return dps / price
-
-
-# ── TTM 每股归母净利 (point-in-time, profit/balance 或 fin 兜底) ──
-def _ttm_eps_profit_balance(code: str, as_of: pd.Timestamp) -> Optional[float]:
-    pro = load_profit(code)
-    bal = load_balance(code)
-    if pro is None or bal is None or '归属于母公司所有者的净利润' not in pro.columns:
-        return None
-    as_of = pd.Timestamp(as_of)
-    pd_ = pro[pro['公告日期'].fillna(pd.Timestamp.max) <= as_of]
-    if pd_.empty:
-        return None
-    pf = pd_.sort_values('报告日')
-    latest = pf.iloc[-1]
-    cum = latest['归属于母公司所有者的净利润']
-    if not np.isfinite(cum):
-        return None
-    rdate = latest['报告日']
-    prev_annual = pf[(pf['报告日'].dt.month == 12) & (pf['报告日'] < rdate)]
-    lyr = float(prev_annual.iloc[-1]['归属于母公司所有者的净利润']) if not prev_annual.empty else np.nan
-    sq_prev = pf[pf['报告日'] == rdate - pd.DateOffset(years=1)]
-    sq = float(sq_prev.iloc[-1]['归属于母公司所有者的净利润']) if not sq_prev.empty else np.nan
-    if not (np.isfinite(lyr) and np.isfinite(sq)):
-        return None
-    ttm = cum + lyr - sq
-    # 股本 (最新已披露资产负债表的实收资本, 公告日 ≤ as_of)
-    bd = bal[bal['公告日期'].fillna(pd.Timestamp.max) <= as_of].sort_values('报告日')
-    if bd.empty or '实收资本(或股本)' not in bd.columns:
-        return None
-    ticks = float(bd.iloc[-1]['实收资本(或股本)'])
-    if not np.isfinite(ticks) or ticks <= 0:
-        return None
-    return ttm / ticks
-
-
-def _ttm_eps_fin(code: str, as_of: pd.Timestamp) -> Optional[float]:
-    """同花顺摘要的 基本每股收益 做 TTM (688036 兜底; 摘要列序不定)"""
-    fin = load_fin_summary(code)
-    if fin is None or '指标' not in fin.columns:
-        return None
-    as_of = pd.Timestamp(as_of)
-    row = fin[fin['指标'] == '基本每股收益']
-    if row.empty:
-        return None
-    s = row.iloc[0, 2:].astype(object)
-    s.index = pd.to_datetime(s.index, format='%Y%m%d', errors='coerce')
-    s = pd.to_numeric(s, errors='coerce')
-    s = s[(s.index.notna()) & (s.index <= as_of)].sort_index()
-    if s.empty:
-        return None
-    latest = s.iloc[-1]
-    annual = s[s.index.month == 12]
-    prev_annual = annual[annual.index < s.index[-1]]
-    lyr = float(prev_annual.iloc[-1]) if not prev_annual.empty else np.nan
-    sq = s.loc[s.index[-1] - pd.DateOffset(years=1)] \
-        if s.index[-1] - pd.DateOffset(years=1) in s.index else np.nan
-    if not (np.isfinite(lyr) and np.isfinite(sq)):
-        return None
-    return float(latest + lyr - sq)
-
-
-def eps_ttm(code: str, as_of: pd.Timestamp) -> Optional[float]:
-    v = _ttm_eps_profit_balance(code, as_of)
-    if v is None:
-        v = _ttm_eps_fin(code, as_of)
-    return v
-
-
-def pe_ttm(code: str, as_of: pd.Timestamp) -> Optional[float]:
-    price = raw_close(code, as_of)
-    eps = eps_ttm(code, as_of)
-    if price is None or eps is None or eps <= 0:
-        return None
-    return price / eps
-
-
 # ── MA120 偏差 (前复权) ──
 def ma120_dev(code: str, as_of: pd.Timestamp) -> Optional[float]:
     df = load_qfq(code)
