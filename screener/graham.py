@@ -12,80 +12,23 @@ Point-in-time 惯例:
 """
 from typing import Dict, List, Optional, Tuple
 import os
-import re
 
 import numpy as np
 import pandas as pd
+from screener.graham_data_access import (
+    DIV_CACHE as _DIV_CACHE, FIN_CACHE as _FIN_CACHE, MKT_CACHE as _MKT_CACHE,
+    indicator_series as _indicator_series, parse_value,
+    read_dividend as _read_dividend, read_fin as _read_fin, read_market as _read_market,
+)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
 DIV_DIR = os.path.join(DATA_DIR, 'dividend')
 
-_UNITS = {'亿': 1e8, '万': 1e4, '元': 1}
-_PATTERN = re.compile(r'^([-]?[\d,.]+)([亿万]?)$')
-
 ANNUAL_REPORT_LAG = pd.DateOffset(months=4, days=30)  # 12-31 报告期 → 次年 4-30
 
 # ── 本地只读文件缓存 (同一进程内复用, 避免每次筛选重复读盘) ──
-_FIN_CACHE: Dict[str, pd.DataFrame] = {}
-_DIV_CACHE: Dict[str, pd.DataFrame] = {}
-_MKT_CACHE: Dict[str, pd.DataFrame] = {}
 _GH_CACHE: Dict[Tuple[str, pd.Timestamp], 'GrahamHolding'] = {}
-
-
-def _read_fin(code: str) -> pd.DataFrame:
-    if code not in _FIN_CACHE:
-        p = os.path.join(FIN_DIR, f'{code}_fin.csv')
-        _FIN_CACHE[code] = pd.read_csv(p) if os.path.exists(p) else pd.DataFrame()
-    return _FIN_CACHE[code]
-
-
-def _read_dividend(code: str) -> pd.DataFrame:
-    if code not in _DIV_CACHE:
-        p = os.path.join(DIV_DIR, f'{code}_dividend.csv')
-        _DIV_CACHE[code] = pd.read_csv(p) if os.path.exists(p) else pd.DataFrame()
-    return _DIV_CACHE[code]
-
-
-def _read_market(code: str) -> pd.DataFrame:
-    if code not in _MKT_CACHE:
-        p = os.path.join(DATA_DIR, f'{code}_market.csv')
-        if os.path.exists(p):
-            _MKT_CACHE[code] = pd.read_csv(p, index_col='date', parse_dates=True,
-                                           usecols=['date', 'close'])
-        else:
-            _MKT_CACHE[code] = pd.DataFrame(index=pd.DatetimeIndex([]))
-    return _MKT_CACHE[code]
-
-
-def parse_value(val) -> Optional[float]:
-    """'615.22亿' → float; 缺失 → None"""
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    if not s or s in ('--', '', '-', 'False', 'nan', 'None'):
-        return None
-    m = _PATTERN.match(s)
-    if m:
-        num = float(m.group(1).replace(',', ''))
-        return num * _UNITS.get(m.group(2), 1)
-    try:
-        return float(s)
-    except (ValueError, TypeError):
-        return None
-
-
-def _indicator_series(df: pd.DataFrame, name: str) -> pd.Series:
-    """取某指标的全部报告期序列 (index=报告期 datetime)"""
-    row = df[df['指标'] == name]
-    if row.empty:
-        return pd.Series(dtype=float)
-    s = row.iloc[0, 2:].astype(object).map(parse_value)
-    s.index = pd.to_datetime(s.index, format='%Y%m%d', errors='coerce')
-    s = pd.to_numeric(s, errors='coerce')
-    return s[(s.index.notna())].sort_index()
 
 
 class GrahamHolding:
