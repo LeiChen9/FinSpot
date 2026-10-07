@@ -41,6 +41,11 @@ from analysis.graham_market import (
     r10y as _r10y,
     target_equity_weight as _target_equity_weight,
 )
+from strategy.graham_ranking import (
+    margin_of_safety_score as _mo_score,
+    profit_trend_components,
+    rank_profit_trend,
+)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -196,77 +201,6 @@ def _industry_of(code: str) -> str:
             for c, ind in zip(u['code'], u['industry'].fillna('')):
                 _industry_cache[str(c)] = str(ind)
     return _industry_cache.get(code, '')
-
-
-def _mo_score(s: Snap) -> float:
-    """安全边际排序: 价格/有形净资产 与 价格/(20×EPS) 中的更差者, 值越小=越便宜优先买入."""
-    tbv = s.tbvps if np.isfinite(s.tbvps) and s.tbvps > 0 else np.nan
-    pe = s.price / s.eps_ttm if (np.isfinite(s.eps_ttm) and s.eps_ttm > 0) else np.nan
-    if np.isfinite(tbv) and np.isfinite(pe):
-        return (s.price / tbv) * (pe / 20.0)
-    if np.isfinite(tbv):
-        return s.price / tbv
-    return np.inf if not np.isfinite(pe) else pe
-
-
-def profit_trend_components(s: 'Snap') -> Optional[Dict[str, float]]:
-    """盈利趋势分量 (全部用时点数据, 无前视)。缺失某分量则相应降权。
-
-    分量:
-      ttm_yoy     TTM 归母净利同比 (盈利是否仍在变好的直接度量)
-      slope       近6年年报归母净利 对数线性斜率 (避免 c9 的首尾两点失真)
-      roe         最新年报 ROE 水平
-      roe_trend   最新 ROE - 3 年前 ROE 变化
-      run         连续盈利增长年数 (从最近一年往前数)
-    """
-    if not s.tradable:
-        return None
-    comps = {}
-    if np.isfinite(s.ttm_yoy):
-        comps['ttm_yoy'] = s.ttm_yoy
-    np_ = s.np_annual[-6:]
-    if len(np_) >= 4 and all(v > 0 for v in np_):
-        ys = np.log(np.asarray(np_, dtype=float))
-        xs = np.arange(len(ys), dtype=float)
-        comps['slope'] = float(np.polyfit(xs, ys, 1)[0])
-    roes = [r for r in s.roe_annual if np.isfinite(r)]
-    if roes:
-        comps['roe'] = roes[-1]
-        if len(roes) >= 3:
-            comps['roe_trend'] = roes[-1] - roes[-3]
-    run_len = 0
-    for i in range(len(s.np_annual) - 1, 0, -1):
-        if s.np_annual[i] <= s.np_annual[i - 1]:
-            break
-        run_len += 1
-    if len(s.np_annual) >= 2:
-        comps['run'] = float(run_len)
-    return comps or None
-
-
-def rank_profit_trend(candidates: List['Snap']) -> Dict[int, float]:
-    """对候选池做盈利趋势横截面排名: 每个分量现值排百分位 (高者优), 等权求和, 越小越好.
-
-    候选无任何可测分量为 inf (排最后, 只在仓位置富余时买入)。
-    """
-    keys = ('ttm_yoy', 'slope', 'roe', 'roe_trend', 'run')
-    comps_list = [profit_trend_components(s) for s in candidates]
-    out = {}
-    for idx, comps in enumerate(comps_list):
-        if comps is None:
-            out[id(candidates[idx])] = float('inf')
-            continue
-        total = 0.0
-        for k in keys:
-            if k not in comps:
-                continue
-            vals = [c[k] for c in comps_list if c is not None and k in c]
-            if not vals:
-                continue
-            rank = pd.Series(vals).rank(ascending=False, method='min').iloc[vals.index(comps[k])]
-            total += float(rank)
-        out[id(candidates[idx])] = total
-    return out
 
 
 def snapshot(code: str, D: pd.Timestamp, bal=None, pro=None, div=None,

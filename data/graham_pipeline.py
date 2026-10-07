@@ -23,9 +23,8 @@
 import os
 import socket
 import sys
-import time
 import argparse
-from datetime import datetime, date
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -33,7 +32,9 @@ import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from data.sources import qq, baostock  # noqa: E402  复用本地方子: qq/baostock 行情源
+from data.graham_industry import fetch_industry as _fetch_industry
+from data.graham_macro_fetch import fetch_macro as _fetch_macro
+from data.graham_market_fetch import fetch_market_history as _fetch_market_tolerated
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 FIN_DIR = os.path.join(DATA_DIR, 'financial')
@@ -42,9 +43,6 @@ META_DIR = os.path.join(DATA_DIR, 'meta')
 LOG_PATH = os.path.join(META_DIR, 'graham_fetch_log.txt')
 
 K_START = '2022-11-01'          # 首个调仓日 2023-01-03 前留足缓冲
-_UA = {"User-Agent": "Mozilla/5.0"}
-
-
 def log(msg):
     os.makedirs(META_DIR, exist_ok=True)
     with open(LOG_PATH, 'a') as f:
@@ -161,157 +159,8 @@ def load_universe() -> pd.DataFrame:
     return pd.read_csv(p, dtype={'code': str})
 
 
-# ─────────────────────────────────────────────────────────────
-# 申万一级行业 (legulegu 指数成分, 全部A股一次抓取)
-# ─────────────────────────────────────────────────────────────
-
-# 申万一级 31 个行业 (2021 版, 公开标准; 行业名称与 legulegu 成分页 申万1级 列一致)
-SW1_BOARDS = [
-    ('801010.SI', '农林牧渔'), ('801030.SI', '基础化工'), ('801040.SI', '钢铁'),
-    ('801050.SI', '有色金属'), ('801080.SI', '电子'), ('801110.SI', '家用电器'),
-    ('801120.SI', '食品饮料'), ('801130.SI', '纺织服饰'), ('801140.SI', '轻工制造'),
-    ('801150.SI', '医药生物'), ('801160.SI', '公用事业'), ('801170.SI', '交通运输'),
-    ('801180.SI', '房地产'), ('801200.SI', '商贸零售'), ('801210.SI', '社会服务'),
-    ('801230.SI', '综合'), ('801710.SI', '建筑材料'), ('801720.SI', '建筑装饰'),
-    ('801730.SI', '电力设备'), ('801740.SI', '国防军工'), ('801750.SI', '计算机'),
-    ('801760.SI', '传媒'), ('801770.SI', '通信'), ('801780.SI', '银行'),
-    ('801790.SI', '非银金融'), ('801880.SI', '汽车'), ('801890.SI', '机械设备'),
-    ('801950.SI', '煤炭'), ('801960.SI', '石油石化'), ('801970.SI', '环保'),
-    ('801980.SI', '美容护理'),
-]
-
-LEGU_HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-
-
-def _fetch_sw_first_level() -> pd.DataFrame:
-    """申万一级行业指数清单 (行业代码/名称, 公开标准表, 无需联网)"""
-    return pd.DataFrame(SW1_BOARDS, columns=['行业代码', '行业名称']).dropna()
-
-
-def _fetch_sw_cons(symbol: str) -> pd.DataFrame:
-    """抓取某申万一级行业成分 (code→申万1级列), 返回 (股票代码, 申万1级)。
-    带指数退避重试, 应对 legulegu 限流。"""
-    import requests as _rq
-    from io import StringIO
-    url = f'https://legulegu.com/stockdata/index-composition?industryCode={symbol}'
-    for backoff in (3, 8, 20, 50):
-        try:
-            r = _rq.get(url, headers=LEGU_HEADERS, timeout=40)
-            if r.status_code != 200:
-                log(f'[IND] {symbol} http {r.status_code}, backoff {backoff}s')
-                time.sleep(backoff)
-                continue
-            df = pd.read_html(StringIO(r.text))[0]
-            cols = [str(c) for c in df.columns]
-            ci = cols.index('股票代码') if '股票代码' in cols else 1
-            l1 = cols.index('申万1级') if '申万1级' in cols else -1
-            if l1 < 0:
-                log(f'[IND] {symbol} 页面无 申万1级 列, backoff {backoff}s')
-                time.sleep(backoff)
-                continue
-            out = df.iloc[:, [ci, l1]].copy()
-            out.columns = ['code', 'sw1']
-            out = out[out['code'].astype(str).str.match(r'^\d{6}')]
-            out['code'] = out['code'].astype(str).str[:6]
-            out['sw1'] = out['sw1'].astype(str).str.strip()
-            out = out.dropna(subset=['sw1'])
-            if len(out):
-                return out
-        except Exception as e:
-            log(f'[IND] {symbol} EXC {type(e).__name__}:{str(e)[:60]}, backoff {backoff}s')
-            time.sleep(backoff)
-    return pd.DataFrame(columns=['code', 'sw1'])
-
-
-def _sina_board_list() -> dict:
-    """新浪行业板块清单: node 码 → (node, 中文名, 成员数,...)"""
-    import requests as _rq
-    import json as _json
-    u = 'http://vip.stock.finance.sina.com.cn/q/view/newSinaHy.php'
-    for _ in range(5):
-        try:
-            r = _rq.get(u, headers=_sina_headers(), timeout=30)
-            raw = r.text
-            i, j = raw.find('{'), raw.rfind('}')
-            if i < 0 or j <= i:
-                time.sleep(4)
-                continue
-            payload = _json.loads(raw[i:j + 1])
-            if payload:
-                return payload
-        except Exception as e:
-            log(f'[IND] 板块清单重试: {type(e).__name__}:{str(e)[:60]}')
-            time.sleep(4)
-    return {}
-
-
-def _sina_headers() -> dict:
-    return {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-            "Referer": "https://finance.sina.com.cn/"}
-
-
-def _sina_node_codes(node: str, max_pages: int = 30) -> list:
-    """新浪板块成分 (分页抓取, sina 每页最多 100 条), 返回 code 列表"""
-    import requests as _rq
-    import json as _json
-    out = []
-    for page in range(1, max_pages + 1):
-        u = (f'http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/'
-             f'Market_Center.getHQNodeData?page={page}&num=100&sort=symbol&asc=1'
-             f'&node={node}&symbol=&_s_r_a=init')
-        rows = None
-        for _ in range(3):
-            try:
-                r = _rq.get(u, headers=_sina_headers(), timeout=30)
-                txt = r.text
-                i = txt.find('[')
-                j = txt.rfind(']')
-                if i >= 0 and j > i:
-                    rows = _json.loads(txt[i:j + 1])
-                break
-            except Exception:
-                time.sleep(2)
-        if not rows:
-            break
-        out.extend(str(x.get('code', '')) for x in rows)
-        if len(rows) < 100:
-            break
-        time.sleep(0.3)
-    return [c for c in out if c]
-
-
 def fetch_industry() -> pd.DataFrame:
-    """行业分类(新浪行业板块, 覆盖几乎全部上市A股) → data/meta/industry_sina.csv,
-    并写回 graham_universe.csv 的 industry 列。"""
-    import requests as _rq
-    import json as _json
-    boards = _sina_board_list()
-    print(f'新浪行业板块: {len(boards)} 个')
-    ind_map = {}
-    base = os.path.join(META_DIR, 'industry_sina.csv')
-    if os.path.exists(base):
-        for _, r in pd.read_csv(base, dtype={'code': str}).iterrows():
-            ind_map.setdefault(r['code'], r['industry'])
-    for node, payload in boards.items():
-        parts = payload.split(',')
-        name = parts[1] if len(parts) > 1 else node
-        codes = _sina_node_codes(node)
-        if not codes:
-            log(f'[IND] {name}({node}) 成分抓取失败, 跳过')
-            continue
-        for c in codes:
-            ind_map.setdefault(c, name)
-        print(f'  {name}: {len(codes)} 只')
-        time.sleep(1.0)   # 限流: 板块间隔 1s
-    ind_df = pd.DataFrame(sorted(ind_map.items()), columns=['code', 'industry'])
-    ind_df.to_csv(base, index=False)
-    log(f'industry_sina saved: {len(ind_df)} codes')
-
-    uni = load_universe()
-    uni['industry'] = uni['code'].map(ind_df.set_index('code')['industry']).fillna('')
-    uni.to_csv(os.path.join(META_DIR, 'graham_universe.csv'), index=False)
-    log(f'graham_universe.csv updated with industry column ({len(uni)} rows)')
-    return ind_df
+    return _fetch_industry(META_DIR, log, load_universe)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -411,205 +260,8 @@ def fetch_one(code: str) -> dict:
     return res
 
 
-def _market_cache(code, qfq: bool):
-    name = f'{code}_qfq.csv' if qfq else f'{code}_market.csv'
-    p = os.path.join(DATA_DIR, name)
-    if not os.path.exists(p) or os.path.getsize(p) == 0:
-        return None
-    try:
-        df = pd.read_csv(p, index_col='date', parse_dates=True)
-        return df if len(df) else None
-    except Exception:
-        return None
-
-
-def _fetch_market_tolerated(code, qfq: bool, expected_min):
-    """反复重取直到窗口起点足够早 (expected_min 为 None 时不校验起点)
-
-    数据源顺序: sina日线(稳定) → 东财 → qq(前复权最近640日) → baostock。
-    """
-    import time as _t
-    for _ in range(4):
-        df = _fetch_market_sina(code, qfq=qfq)
-        if df is None or df.empty:
-            df = _fetch_market_ak(code, qfq=qfq)
-        if df is None or df.empty:
-            df = _fetch_market_local(code, qfq=qfq)
-        if df is None or df.empty:
-            return None
-        if expected_min is None:
-            return df
-        ok_start = df.index.min() <= expected_min + pd.Timedelta('90D')
-        ok_span = (df.index.max() - df.index.min()).days >= 100
-        if ok_start and ok_span:
-            return df
-        _t.sleep(2)
-    return df
-
-
-def _fetch_market_sina(code, qfq: bool):
-    """sina 历史日线 (finance.sina.com.cn), 带自动重试"""
-    import akshare as ak
-    import time as _t
-    sym = symbol_sina(code)
-    for _ in range(3):
-        try:
-            df = ak.stock_zh_a_daily(
-                symbol=sym,
-                start_date=K_START.replace('-', ''),
-                end_date=datetime.now().strftime('%Y%m%d'),
-                adjust='qfq' if qfq else '',
-            )
-            if df is None or df.empty:
-                return None
-            df = df.reset_index()
-            renamed = df.rename(columns={
-                'date': 'date', 'open': 'open', 'high': 'high',
-                'low': 'low', 'close': 'close', 'volume': 'volume'})
-            cols = ['date', 'open', 'high', 'low', 'close', 'volume']
-            for c in ['open', 'high', 'low', 'close', 'volume']:
-                if c not in renamed.columns:
-                    renamed[c] = np.nan
-            renamed = renamed[cols]
-            renamed['date'] = pd.to_datetime(renamed['date'])
-            renamed = renamed.set_index('date').sort_index()
-            for c in ['open', 'high', 'low', 'close', 'volume']:
-                renamed[c] = pd.to_numeric(renamed[c], errors='coerce')
-            return renamed
-        except Exception:
-            _t.sleep(2)
-            continue
-    return None
-
-
-def _fetch_market_ak(code, qfq: bool):
-    import akshare as ak
-    import time as _t
-    for attempt in range(3):
-        try:
-            df = ak.stock_zh_a_hist(
-                symbol=code, period='daily',
-                start_date=K_START.replace('-', ''),
-                end_date=datetime.now().strftime('%Y%m%d'),
-                adjust='qfq' if qfq else '',
-            )
-            if df is None or df.empty:
-                return None
-            df = df.rename(columns={'日期': 'date', '开盘': 'open', '最高': 'high',
-                                    '最低': 'low', '收盘': 'close', '成交量': 'volume'})
-            df = df[['date', 'open', 'high', 'low', 'close', 'volume']]
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.set_index('date').sort_index()
-            for c in ['open', 'high', 'low', 'close', 'volume']:
-                df[c] = pd.to_numeric(df[c], errors='coerce')
-            # 窗口校验: 最早日期应接近起始日 (次新股除外)
-            expect = pd.Timestamp(K_START)
-            if not df.empty and df.index[-1] - df.index[0] < pd.Timedelta('100D'):
-                _t.sleep(2)
-                continue
-            return df
-        except Exception:
-            _t.sleep(2)
-            continue
-    return None
-
-
-def _fetch_market_local(code, qfq: bool):
-    """qq.fetch 返回前复权; baostock 返回不复权。作为降级填充另一份。"""
-    start = pd.to_datetime(K_START)
-    end = pd.Timestamp.now()
-    if qfq:
-        try:
-            df = qq.fetch(code, start, end)
-            if df is not None and len(df):
-                return df
-        except Exception:
-            pass
-        return None
-    try:
-        df = baostock.fetch(code, start, end)
-        if df is not None and len(df):
-            return df
-        df = qq.fetch(code, start, end)
-        return df
-    except Exception:
-        return None
-
-
-# ─────────────────────────────────────────────────────────────
-# 宏观 + 基准
-# ─────────────────────────────────────────────────────────────
-
 def fetch_macro():
-    import akshare as ak
-    # 中债 10Y 国债收益率
-    try:
-        df = ak.bond_zh_us_rate()
-        df = df.rename(columns={'日期': 'date'})
-        df['date'] = pd.to_datetime(df['date'])
-        df = df[['date', '中国国债收益率2年', '中国国债收益率5年',
-                 '中国国债收益率10年', '中国国债收益率30年']].set_index('date').sort_index()
-        df.to_csv(os.path.join(DATA_DIR, 'zh_10y_treasury.csv'))
-        log(f'10y treasury cached: {len(df)} rows')
-    except Exception as e:
-        log(f'10y treasury ERR {e}')
-
-    # 全部A股 平均/中位 PE
-    try:
-        df = ak.stock_a_ttm_lyr()
-        df = df.rename(columns={'date': 'date'})
-        df['date'] = pd.to_datetime(df['date'])
-        df = df[['date', 'middlePETTM', 'averagePETTM', 'middlePELYR', 'averagePELYR']].set_index('date').sort_index()
-        os.makedirs(META_DIR, exist_ok=True)
-        df.to_csv(os.path.join(META_DIR, 'all_a_pe.csv'))
-        log(f'all-a PE cached: {len(df)} rows')
-    except Exception as e:
-        log(f'all-a PE ERR {e}')
-
-    # 中证800 基准 (sina 优先)
-    idx = None
-    try:
-        idx = ak.stock_zh_index_daily(symbol="sh000906")
-        if idx is not None:
-            idx = idx.reset_index() if 'date' not in idx.columns else idx
-    except Exception as e:
-        log(f'000906 sina ERR {e}')
-    if idx is None or idx.empty:
-        try:
-            idx = ak.index_zh_a_hist(symbol='000906', period='daily',
-                                     start_date='20150101',
-                                     end_date=datetime.now().strftime('%Y%m%d'))
-        except Exception as e:
-            log(f'000906 em ERR {e}')
-    if idx is not None and not idx.empty:
-        idx = idx.rename(columns={'日期': 'date', '开盘': 'open', '最高': 'high',
-                                  '最低': 'low', '收盘': 'close', '成交量': 'volume'})
-        cols = ['date', 'open', 'high', 'low', 'close', 'volume']
-        for c in ['open', 'high', 'low', 'close', 'volume']:
-            if c not in idx.columns:
-                idx[c] = np.nan
-        idx['date'] = pd.to_datetime(idx['date'])
-        idx = idx[cols].set_index('date').sort_index()
-        idx.to_csv(os.path.join(DATA_DIR, '000906_market.csv'))
-        log(f'000906 cached: {len(idx)} rows')
-
-    # 沪深300 基准 (sina 指数接口, 同源 000906, 覆盖长历史)
-    for iw, tag in (('sh000300', '000300'), ('sh000905', '000905')):
-        idf = None
-        try:
-            idf = ak.stock_zh_index_daily(symbol=iw)
-        except Exception as e:
-            log(f'{tag} sind ERR {e}')
-        if idf is not None and not idf.empty:
-            idf = idf.rename(columns={'日期': 'date', '开盘': 'open', '最高': 'high',
-                                      '最低': 'low', '收盘': 'close', '成交量': 'volume'})
-            for c in ['open', 'high', 'low', 'close', 'volume']:
-                if c not in idf.columns:
-                    idf[c] = np.nan
-            idf['date'] = pd.to_datetime(idf['date'])
-            idf = idf[['date', 'open', 'high', 'low', 'close', 'volume']].set_index('date').sort_index()
-            idf.to_csv(os.path.join(DATA_DIR, f'{tag}_market.csv'))
-            log(f'{tag} cached: {len(idf)} rows')
+    return _fetch_macro(DATA_DIR, META_DIR, log)
 
 
 # ─────────────────────────────────────────────────────────────
