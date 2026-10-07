@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from strategy.portfolio import Portfolio, Holding
 from strategy.signals import ATRChannelBreakoutSignal
 from indicators.technical import atr, keltner_channel
+from strategy.atr_risk import should_add
 
 
 class ATRChannelStrategy:
@@ -92,21 +93,9 @@ class ATRChannelStrategy:
 
     def _should_add_position(self, code: str, current_price: float, entry_price: float, atr_value: float) -> bool:
         """判断是否应该加仓"""
-        if atr_value <= 0:
-            return False
-
-        # 计算当前价格上涨了多少个 ATR
-        price_increase = current_price - entry_price
-        atr_multiple = price_increase / atr_value
-
-        # 获取已加仓次数
         add_count = self.add_count.get(code, 0)
-
-        # 每上涨 0.5 个 ATR 加仓一次
-        if atr_multiple >= (add_count + 1) * self.atr_add_threshold:
-            return True
-
-        return False
+        return should_add(entry_price, current_price, atr_value,
+                          self.atr_add_threshold, add_count)
 
     def _generate_signals(self, market_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.Series]:
         """为所有股票生成信号"""

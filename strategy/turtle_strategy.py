@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from strategy.portfolio import Portfolio, Holding
 from strategy.signals import TurtleSignal
 from indicators.technical import atr
+from strategy.atr_risk import should_add, trailing_stop, unit_size
 
 
 class TurtleStrategy:
@@ -66,47 +67,15 @@ class TurtleStrategy:
         - 每股风险 = N * ATR
         - 头寸规模 = 每单位风险 / 每股风险
         """
-        if atr_value <= 0 or price <= 0:
-            return 0
-
-        # 每单位风险金额
-        risk_amount = current_nav * self.risk_per_trade
-
-        # 每股风险（使用ATR作为风险度量）
-        risk_per_share = self.stop_loss_atr * atr_value
-
-        # 计算股数（100股的整数倍）
-        shares = int(risk_amount / risk_per_share / 100) * 100
-
-        # 确保不超过最大持仓比例（10%）
-        max_shares = int(current_nav * 0.10 / price / 100) * 100
-        shares = min(shares, max_shares)
-
-        return max(shares, 0)
+        return unit_size(price, atr_value, current_nav, self.risk_per_trade,
+                         self.stop_loss_atr)
 
     def _should_add_position(self, code: str, current_price: float, atr_value: float) -> bool:
         """判断是否应该加仓"""
-        if atr_value <= 0:
-            return False
-
         info = self.position_info.get(code)
-        if not info:
-            return False
-
-        # 已达到最大加仓次数
-        if info['units'] >= self.max_units:
-            return False
-
-        # 计算当前价格上涨了多少个ATR
-        last_entry_price = info['last_entry_price']
-        price_increase = current_price - last_entry_price
-        atr_multiple = price_increase / atr_value
-
-        # 每上涨0.5个ATR加仓一次
-        if atr_multiple >= self.add_threshold:
-            return True
-
-        return False
+        return bool(info and info['units'] < self.max_units and should_add(
+            info['last_entry_price'], current_price, atr_value, self.add_threshold,
+        ))
 
     def _update_stop_loss(self, code: str, current_price: float, atr_value: float):
         """更新止损价"""
@@ -115,11 +84,9 @@ class TurtleStrategy:
             return
 
         # 新的止损价 = 当前价格 - 2个ATR
-        new_stop = current_price - self.stop_loss_atr * atr_value
-
-        # 止损价只能上移，不能下移
-        if new_stop > info['stop_loss']:
-            info['stop_loss'] = new_stop
+        info['stop_loss'] = trailing_stop(
+            current_price, atr_value, self.stop_loss_atr, info['stop_loss'],
+        )
 
     def _check_stop_loss(self, code: str, current_price: float) -> bool:
         """检查是否触发止损"""
