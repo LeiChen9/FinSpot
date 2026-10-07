@@ -5,8 +5,8 @@ from typing import Dict, List, Optional, Tuple
 from backtest.portfolio import Portfolio, Holding
 from strategy.signals import ATRChannelBreakoutSignal
 from indicators.technical import atr, keltner_channel
-from strategy.atr_risk import should_add
-from strategy.position_sizing import capped_add_amount, initial_amount
+from backtest.atr_risk import should_add
+from backtest.sizing import capped_add_amount, initial_amount
 from backtest.calendar import market_days
 
 

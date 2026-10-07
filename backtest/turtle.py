@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 from backtest.portfolio import Portfolio, Holding
 from strategy.signals import TurtleSignal
 from indicators.technical import atr
-from strategy.atr_risk import should_add, trailing_stop, unit_size
+from backtest.atr_risk import should_add, trailing_stop, unit_size
 from backtest.calendar import market_days
 
 

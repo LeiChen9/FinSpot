@@ -8,7 +8,7 @@ import pandas as pd
 from typing import Dict, List, Callable, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass, field
-from strategy.risk_parity_math import calc_erc_weights
+from backtest.risk_parity_math import calc_erc_weights
 from backtest.portfolio_nav import build_nav_from_weights as _build_nav_from_weights
 
 

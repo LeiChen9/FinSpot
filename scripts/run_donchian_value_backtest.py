@@ -17,7 +17,7 @@ from analysis.performance import performance_summary
 from applications.backtests import benchmark_nav
 from data.local import load_market_frames
 from screener.dividend_value import build_value_screener
-from strategy.donchian_value_strategy import DonchianValueStrategy
+from backtest.donchian import DonchianValueStrategy
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 START = pd.Timestamp('2023-01-01')

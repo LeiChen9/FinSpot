@@ -12,7 +12,7 @@ from analysis.performance import nav_summary
 from data.financial import FinancialDataLoader
 from strategy.factors import PRICE_FACTORS
 from strategy.fundamental_factors import FINANCIAL_FACTORS
-from strategy.model_types import BacktestResult, PeriodSnapshot
+from backtest.types import BacktestResult, PeriodSnapshot
 from strategy.factor_model import FactorModel as CanonicalFactorModel
 from backtest.portfolio_nav import build_nav_from_weights
 

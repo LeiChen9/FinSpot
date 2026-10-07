@@ -4,7 +4,7 @@ import numpy as np
 from typing import Dict, List, Optional
 from backtest.portfolio import Portfolio
 from strategy.double_bottom_signals import detect_double_bottom, find_pivots
-from strategy.position_sizing import whole_lot_shares
+from backtest.sizing import whole_lot_shares
 from backtest.calendar import market_days
 
 

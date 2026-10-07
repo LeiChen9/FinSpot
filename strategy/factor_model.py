@@ -12,7 +12,7 @@ from scipy import stats
 from data.financial import FinancialDataLoader
 from strategy.factors import PRICE_CALCS, PRICE_FACTORS
 from strategy.fundamental_factors import FINANCIAL_FACTORS, FUNDAMENTAL_CALCS
-from strategy.model_types import PeriodSnapshot
+from backtest.types import PeriodSnapshot
 
 
 def _zscore(series: pd.Series) -> pd.Series:
