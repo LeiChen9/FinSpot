@@ -13,9 +13,8 @@
 输入 market_data: {code: DataFrame(date,open,high,low,close,volume)}
 """
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List
 
-import numpy as np
 import pandas as pd
 
 from strategy.mean_reversion_rules import (
