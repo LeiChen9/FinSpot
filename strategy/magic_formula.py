@@ -35,6 +35,8 @@ from strategy.graham_strategy import (   # noqa: F401  复用本地缓存/口径
     snapshot, _name_of, _industry_of, buy_fee, sell_fee, perf_metrics,
 )
 from strategy.graham_universe_view import is_st_name
+from strategy.magic_factors import listing_proxy_years as _listing_proxy_years
+from strategy.magic_factors import rank_magic_candidates
 
 N_HOLDINGS = 30                      # 组合只数 (等权)
 EXCLUDE_INDUSTRIES = {'金融行业', '房地产'}   # 高杠杆/盈利不可持续 → ROE/E/P 失真的行业
@@ -58,31 +60,7 @@ K_ANCHOR = pd.Timestamp('2022-11-01')      # 抓取窗口起点 (老股 kline �
 
 
 def listing_proxy_years(code: str, D: pd.Timestamp) -> Optional[float]:
-    """上市时长的 kline 代理: 返回按首根 kline 计算的上市年数; 老股(锚定窗口内)返回足够大。
-
-    全市场 kline 起点统一锚定 2022-11-01 (抓取窗口), 因此:
-      - 首根 kline ≤ 锚点+90 天 → 数据被窗口截断, 无法确证, 视为上市已久 (返回保险的大数);
-      - 否则是 2023 年起真实新上市 → 上市时长 = D - 首根 kline 日期。
-    """
-    df = load_market(code, qfq=False)
-    if df is None or df.empty:
-        bal = load_balance(code)
-        pro = load_profit(code)
-        earliest = None
-        for d2 in (bal, pro):
-            if d2 is not None and len(d2):
-                r = pd.to_datetime(d2['报告日'], errors='coerce').dropna()
-                if len(r):
-                    m = r.min()
-                    if earliest is None or m < earliest:
-                        earliest = m
-        if earliest is None or pd.isna(earliest):
-            return None
-        return (D - earliest).days / 365.25
-    first = df.index.min()
-    if first <= K_ANCHOR + pd.Timedelta(days=90):
-        return 1.0e9     # 老股, 视为远大于 IPO_MIN_YEARS
-    return (D - first).days / 365.25
+    return _listing_proxy_years(code, D, load_market, load_balance, load_profit, K_ANCHOR)
 
 
 is_st = is_st_name
@@ -168,18 +146,10 @@ def rank_candidates(D: pd.Timestamp, cyclical_mode: str = DEFAULT_CYCLICAL_MODE)
     df = screen_pool(D)
     if df.empty:
         return pd.DataFrame()
-    if cyclical_mode == CYCLICAL_MODE_EXCLUDE:
-        df = df[~df['cyclical']].copy()
-    # E/P 降序排名 (第1名=1), ROE 排名 (基线降序; reverse 模式下周期行业升序), 综合=和
-    df['rank_ep'] = df['ep'].rank(ascending=False, method='min').astype(int)
-    if cyclical_mode == CYCLICAL_MODE_REVERSE:
-        roe_asc = df['roe'].rank(ascending=True, method='min').astype(int)
-        roe_desc = df['roe'].rank(ascending=False, method='min').astype(int)
-        df['rank_roe'] = np.where(df['cyclical'], roe_asc, roe_desc)
-    else:
-        df['rank_roe'] = df['roe'].rank(ascending=False, method='min').astype(int)
-    df['composite'] = df['rank_ep'] + df['rank_roe']
-    df = df.sort_values(['composite', 'rank_ep', 'code']).reset_index(drop=True)
+    df = rank_magic_candidates(
+        df, cyclical_mode, CYCLICAL_MODE_EXCLUDE,
+        CYCLICAL_MODE_REVERSE, CYCLICAL_INDUSTRIES,
+    )
     if cyclical_mode == CYCLICAL_MODE_EXCLUDE:
         # 更新漏斗: exclude 模式下的周期剔除数
         cyc_excl = int((screen_pool(D)['cyclical']).sum())
