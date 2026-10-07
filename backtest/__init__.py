@@ -1,5 +1,6 @@
 """Unified backtest execution domain."""
 
+from backtest.engine import BacktestEngine, Position, Trade
 from backtest.atr_channel import ATRChannelStrategy
 from backtest.band import BandBacktest
 from backtest.double_bottom import DoubleBottomStrategy
@@ -12,4 +13,5 @@ __all__ = [
     'ATRChannelStrategy', 'BandBacktest', 'DoubleBottomStrategy',
     'GrahamBacktest', 'MagicBacktest', 'MeanReversionBacktest',
     'TurtleStrategy', 'Snap', 'snapshot',
+    'BacktestEngine', 'Position', 'Trade',
 ]

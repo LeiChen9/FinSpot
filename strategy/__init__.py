@@ -5,7 +5,8 @@ from backtest.portfolio import Portfolio, Holding
 from strategy.risk import RiskManager, TrendTracker
 """Signal, factor, screening and portfolio-rule domains."""
 
-from strategy.base import BacktestEngine, Position, Signal, Strategy, Trade
+from backtest.engine import BacktestEngine, Position, Trade
+from strategy.base import Signal, Strategy
 from strategy.fundamental import FundamentalSignal
 from strategy.risk import RiskManager, TrendTracker
 from strategy.signals import MACrossSignal, RSISignal, ValuationSignal
