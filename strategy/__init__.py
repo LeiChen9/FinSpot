@@ -13,9 +13,12 @@ from strategy.magic_backtest import MagicBacktest
 from strategy.trend_execution import (
     ATRChannelStrategy, DoubleBottomStrategy, TurtleStrategy,
 )
+from strategy.graham_backtest import GrahamBacktest
+from strategy.magic_ranking import rank_candidates, screen_pool
 
 __all__ = [
     'build_nav_from_weights', 'market_days', 'whole_lot_shares', 'Snap',
     'snapshot', 'MagicBacktest', 'ATRChannelStrategy',
     'DoubleBottomStrategy', 'TurtleStrategy',
+    'GrahamBacktest', 'rank_candidates', 'screen_pool',
 ]
