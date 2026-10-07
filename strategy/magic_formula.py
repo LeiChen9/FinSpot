@@ -32,8 +32,9 @@ from strategy.graham_strategy import (   # noqa: F401  复用本地缓存/口径
     START, END, SIZE_QUANTILE,
     load_universe, load_balance, load_profit, load_dividend, load_market,
     load_10y, load_all_a_pe, load_index, trading_days, rebalance_dates,
-    snapshot, _name_of, _industry_of, buy_fee, sell_fee, perf_metrics,
+    _name_of, _industry_of, buy_fee, sell_fee, perf_metrics,
 )
+from strategy.graham_snapshot import snapshot
 from strategy.graham_universe_view import is_st_name
 from strategy.magic_factors import listing_proxy_years as _listing_proxy_years
 from strategy.magic_factors import rank_magic_candidates

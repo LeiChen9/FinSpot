@@ -8,5 +8,14 @@ from strategy.risk import RiskManager, TrendTracker
 from strategy.portfolio_nav import build_nav_from_weights
 from strategy.calendar import market_days
 from strategy.position_sizing import whole_lot_shares
+from strategy.graham_snapshot import Snap, snapshot
+from strategy.magic_backtest import MagicBacktest
+from strategy.trend_execution import (
+    ATRChannelStrategy, DoubleBottomStrategy, TurtleStrategy,
+)
 
-__all__ = ['build_nav_from_weights', 'market_days', 'whole_lot_shares']
+__all__ = [
+    'build_nav_from_weights', 'market_days', 'whole_lot_shares', 'Snap',
+    'snapshot', 'MagicBacktest', 'ATRChannelStrategy',
+    'DoubleBottomStrategy', 'TurtleStrategy',
+]
