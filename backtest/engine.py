@@ -24,10 +24,66 @@ def market_days(market_data: Dict[str, pd.DataFrame], start, end):
     return [day for day in days if start <= day <= end]
 
 
+# ── 交易成本计算 (佣金含最低 5 元, 加滑点与卖出印花税) ──
+
+def buy_cost(amount: float) -> float:
+    """买入 `amount`(股数×价格) 的交易成本。"""
+    return amount * SLIPPAGE + max(amount * COMMISSION, MIN_FEE)
+
+
+def sell_cost(amount: float) -> float:
+    """卖出 `amount`(股数×价格) 的交易成本。"""
+    return amount * SLIPPAGE + max(amount * COMMISSION, MIN_FEE) + amount * STAMP_TAX
+
+
 # ── 仓位计算 ──
 
 def whole_lot_shares(amount: float, price: float, lot: int = 100) -> int:
     return int(amount / price / lot) * lot if price > 0 else 0
+
+
+def affordable_shares(cash: float, price: float, lot: int = 100) -> int:
+    """在 cash 预算内, 扣除买入成本后能买的最大整手股数。"""
+    if price <= 0:
+        return 0
+    shares = whole_lot_shares(cash, price, lot)
+    while shares > 0 and shares * price + buy_cost(shares * price) > cash:
+        shares -= lot
+    return shares
+
+
+# ── 分红与买入持有 ──
+
+def dividends_by_day(index: pd.Index, divs: pd.Series) -> dict:
+    """把每份分红 Series 对齐到交易日: {交易日: 当日每份分红金额}。"""
+    out = {}
+    for day, amount in divs.sort_index().items():
+        pos = index.searchsorted(pd.Timestamp(day).normalize())
+        if pos < len(index):
+            key = index[pos]
+            out[key] = out.get(key, 0.0) + float(amount)
+    return out
+
+
+def buy_and_hold_nav(close: pd.Series, dividends: dict = None,
+                     initial_cash: float = 100_000.0) -> pd.Series:
+    """首日全额买入并持有; 收到分红则当日现金再投 (金额口径同策略)。"""
+    dividends = dividends or {}
+    cash, shares, values = initial_cash, 0.0, []
+    for dt, price in close.items():
+        if shares > 0 and dividends.get(dt):
+            divcash = shares * dividends[dt]
+            n = affordable_shares(divcash, price)
+            if n > 0:
+                cash += divcash - (n * price + buy_cost(n * price))
+                shares += n
+        elif shares == 0:
+            n = affordable_shares(cash, price)
+            if n > 0:
+                cash -= n * price + buy_cost(n * price)
+                shares = n
+        values.append(cash + shares * price)
+    return pd.Series(values, index=close.index)
 
 
 # ── 组合记账 ──

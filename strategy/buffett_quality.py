@@ -14,7 +14,7 @@ import pandas as pd
 
 from strategy.graham_dodd import (
     END, Pos, SIZE_QUANTILE, industry_of, buy_fee, is_st_name, load_market,
-    load_universe, sell_fee, snapshot, trading_days, GrahamBacktest,
+    load_universe, sell_fee, snapshot, trading_days, GrahamStrategy,
 )
 
 N_HOLDINGS = 20
@@ -143,7 +143,7 @@ def audit_borderline(D: pd.Timestamp, top: int = 12) -> List[dict]:
 
 
 @dataclass
-class QualityBacktest:
+class QualityStrategy:
     initial_capital: float = 1_000_000.0
     n: int = N_HOLDINGS
 
@@ -163,7 +163,7 @@ class QualityBacktest:
 
     def _sell_all(self, D):
         for code, pos in list(self.positions.items()):
-            proceeds = GrahamBacktest._liquidation_value(pos, D)
+            proceeds = GrahamStrategy._liquidation_value(pos, D)
             fee = sell_fee(D, proceeds)
             self.cash += proceeds - fee
             self.positions.pop(code)
@@ -230,7 +230,7 @@ class QualityBacktest:
             value = cash
             held = 0.0
             for pos in positions:
-                market, dividends = GrahamBacktest._position_value(pos, t)
+                market, dividends = GrahamStrategy._position_value(pos, t)
                 value += market + dividends
                 held += market
             rows[t] = value

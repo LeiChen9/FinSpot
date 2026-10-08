@@ -15,7 +15,7 @@ def fetch(code: str, start: datetime, end: datetime) -> pd.DataFrame | None:
         ticker = f"{prefix}{code}"
         params = {
             "_var": "kline_dayqfq",
-            "param": f"{ticker},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},640,qfq",
+            "param": f"{ticker},day,{start.strftime('%Y-%m-%d')},{end.strftime('%Y-%m-%d')},100000,qfq",
             "r": "0.8205512681390605",
         }
         try:

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from strategy.graham_dodd import Pos, buy_fee, sell_fee, trading_days
-from strategy.graham_dodd import GrahamBacktest, load_index, load_market, load_universe, snapshot
+from strategy.graham_dodd import GrahamStrategy, load_index, load_market, load_universe, snapshot
 from strategy.magic_formula import CYCLICAL_INDUSTRIES
 
 CAP_FLOOR = 300e8
@@ -200,7 +200,7 @@ def run_full(start: pd.Timestamp, hard_end: pd.Timestamp, capital: float = 500_0
     if maps is None:
         maps = [select_topN(D) for D in qs]
 
-    GB = GrahamBacktest
+    GB = GrahamStrategy
     cash = capital
     poss = {}
     navs = {}

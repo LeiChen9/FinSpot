@@ -212,7 +212,7 @@ def cyclical_comparison(initial_capital: float = 1_000_000.0):
             date: pick_top(rank_candidates(date, cyclical_mode=mode), n=N_HOLDINGS)
             for date in dates
         }
-        backtest = MagicBacktest(initial_capital=initial_capital, n=N_HOLDINGS)
+        backtest = MagicStrategy(initial_capital=initial_capital, n=N_HOLDINGS)
         navs[mode], _, _ = backtest.run(dates, ranking_map=ranking_map, verbose=False)
 
     base = navs[CYCLICAL_MODE_NONE] / initial_capital
@@ -236,7 +236,7 @@ def cyclical_comparison(initial_capital: float = 1_000_000.0):
 MPos = Pos
 
 
-class MagicBacktest:
+class MagicStrategy:
     def __init__(self, initial_capital: float = 1_000_000.0, n: int = N_HOLDINGS):
         self.initial_capital = initial_capital
         self.n = n

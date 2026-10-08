@@ -23,6 +23,7 @@ notebooks
 | Path | Owns | Put here |
 |---|---|---|
 | `notebooks/` | Research workflow and result inspection | Data selection, strategy configuration, calls, tables, plots, comparisons |
+| `scripts/` | Ephemeral scratch (gitignored) | Throwaway validation harnesses, CLI smoke runs; promote validated logic up the stack |
 | `strategy/` | Complete strategy concepts | Screening policy specific to a strategy, portfolio rules, strategy-specific backtest orchestration |
 | `backtest/` | Reusable execution and result mechanics | Portfolio ledger, generic target-weight engine, calendar, costs, trade analysis, performance metrics |
 | `screener/` | Point-in-time candidate selection | Reusable liquidity, dividend-value, Graham, and fixed-pool screens |

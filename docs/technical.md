@@ -6,7 +6,7 @@ This is an implementation map for starting work in a fresh session. Prefer these
 
 | Module | Implemented API | Use |
 |---|---|---|
-| `backtest.engine` | `Portfolio`, `Holding`, `market_days`, `whole_lot_shares`; `COMMISSION`, `STAMP_TAX`, `SLIPPAGE`, `MIN_FEE` | Cash/holdings ledger, trade log, daily snapshots, common trading constants |
+| `backtest.engine` | `Portfolio`, `Holding`, `market_days`, `whole_lot_shares`, `affordable_shares`, `buy_cost`, `sell_cost`, `dividends_by_day`, `buy_and_hold_nav`; `COMMISSION`, `STAMP_TAX`, `SLIPPAGE`, `MIN_FEE` | Cash/holdings ledger, trade log, daily snapshots, cost/sizing/benchmark helpers, common trading constants |
 | `backtest.weights` | `BTResult`, `quarterly_rebalance_dates(dates, start, end)`, `run_weight_backtest(all_data, target_w, rebal_dates, init_cap=..., comm=..., tax=..., cap_code=None, cap=None)` | Daily-marked, periodic target-weight portfolio; optional single-asset cap with excess redistributed proportionally |
 | `backtest.metrics` | `perf_metrics`, `performance_summary`, `nav_summary`, `calc_perf`, `formatted_perf_row`, `monthly_returns` | NAV and return summaries, notebook result tables |
 | `backtest.trades` | `holdings_frame`, `turnover_summary`, `fifo_pnl`, `fifo_trade_outcomes`, `trade_statistics` | Trade and holding analysis |
@@ -18,21 +18,22 @@ The target-weight engine is suitable for periodic asset allocation. Event-driven
 
 | Module | Public entrypoints | Current use |
 |---|---|---|
-| `strategy.graham_dodd` | `snapshot`, `evaluate`, `screen_all`, `rebalance_dates`, `GrahamBacktest` | Graham & Dodd screening, point-in-time evaluation, dividend/corporate-action accounting, backtest |
-| `strategy.buffett_quality` | `annual_signal_dates`, `rank_candidates`, `build_ranking_map`, `QualityBacktest`, `audit_borderline` | Conservative annual quality proxy; notebook `magic_formula_a_share.ipynb` |
+| `strategy.graham_dodd` | `snapshot`, `evaluate`, `screen_all`, `rebalance_dates`, `GrahamStrategy` | Graham & Dodd screening, point-in-time evaluation, dividend/corporate-action accounting, backtest |
+| `strategy.buffett_quality` | `annual_signal_dates`, `rank_candidates`, `build_ranking_map`, `QualityStrategy`, `audit_borderline` | Conservative annual quality proxy; notebook `magic_formula_a_share.ipynb` |
 | `strategy.buffetts_alpha` | `big_pool`, `value_rank`, `gated_pool`, `add_composite`, `select_topN`, `quarter_dates`, `run_full` | Value/safety/quality composite; notebook `buffetts_alpha_a_share.ipynb` |
-| `strategy.magic_formula` | `screen_pool`, `rank_candidates`, `pick_top`, `build_ranking_map`, `MagicBacktest`, `cyclical_comparison` | Greenblatt-style ranking and cyclical-sector comparison |
+| `strategy.magic_formula` | `screen_pool`, `rank_candidates`, `pick_top`, `build_ranking_map`, `MagicStrategy`, `cyclical_comparison` | Greenblatt-style ranking and cyclical-sector comparison |
 | `strategy.turtle` | `TurtleSignal`, `TurtleStrategy` | ATR position sizing and Turtle breakout; notebook `atr_channel_strategy.ipynb` |
-| `strategy.band_ma120` | `BandBacktest` | High-dividend pool with MA120 entry/add/sell bands |
-| `strategy.dividend_ma120` | `MeanReversionBacktest`, `run_backtest`, `target_weight` | MA120 target-weight mean reversion; retained for direct strategy use |
+| `strategy.band_ma120` | `BandStrategy` | High-dividend pool with MA120 entry/add/sell bands |
+| `strategy.dividend_ma120` | `MeanReversionStrategy`, `run_backtest`, `target_weight` | MA120 target-weight mean reversion; retained for direct strategy use |
 | `strategy.donchian_value` | `DonchianValueStrategy` | Monthly value pool with Donchian entry/exit |
 | `strategy.double_bottom` | `find_pivots`, `detect_double_bottom`, `DoubleBottomStrategy` | Double-bottom breakout, adds, and segment liquidation |
 | `strategy.all_weather` | `TARGET_WEIGHTS`, `BENCH_6040_WEIGHTS` | A-share all-weather allocation configuration |
 | `strategy.permanent_portfolio` | `TARGET_WEIGHTS`, `QDII_CODE`, `QDII_CAP`, benchmark/asset maps | China permanent-portfolio allocation configuration |
-| `strategy.bank_pb` | `load_bank_data`, `screen_top10_banks`, `BankPBBacktest` | Bank-sector low-PB screen and daily rebalance/add/switch rules |
-| `strategy.growth_stock` | `load_all_market_data`, `precompute_indicators`, `screen_stocks`, `GrowthStockBacktest`, `get_rebalance_dates` | Momentum/value-zone growth-stock experiment |
+| `strategy.bank_pb` | `load_bank_data`, `screen_top10_banks`, `BankPBStrategy` | Bank-sector low-PB screen and daily rebalance/add/switch rules |
+| `strategy.growth_stock` | `load_all_market_data`, `precompute_indicators`, `screen_stocks`, `GrowthStockStrategy`, `get_rebalance_dates` | Momentum/value-zone growth-stock experiment |
+| `strategy.dividend_bond_spread` | `DividendBondSpreadStrategy` | Dividend-yield minus 10Y treasury spread threshold DCA; unadjusted price + cash-dividend reinvest; notebook `dividend_bond_spread.ipynb` |
 
-Strategy classes generally return NAV DataFrames or maintain NAV/trade histories on the instance. Read each class signature before choosing the input data shape; `TurtleStrategy` and `DoubleBottomStrategy` accept `{code: DataFrame}` market maps, while `BandBacktest` receives its market map and screener at construction.
+Strategy classes generally return NAV DataFrames or maintain NAV/trade histories on the instance. Read each class signature before choosing the input data shape; `TurtleStrategy` and `DoubleBottomStrategy` accept `{code: DataFrame}` market maps, while `BandStrategy` receives its market map and screener at construction.
 
 ## Screening
 
@@ -67,7 +68,7 @@ Strategy classes generally return NAV DataFrames or maintain NAV/trade histories
 | `dataload.pipeline_graham` | Full-A universe, statements, dividends, market, macro, and industry preparation |
 | `dataload.pipeline_local` | Constituents, market, financials, dividends, and benchmarks by stage |
 | `dataload.all_weather` | QQ/Sina/ChinaBond cache-backed input assembly for all-weather notebook |
-| `dataload.etf` | QQ/Akshare ETF/index fetching with local `data/etf_{code}.csv` cache |
+| `dataload.etf` | `fetch_data(code, start, end, adjust='qfq')` (QQ/Akshare, cache `data/etf_{code}[_raw].csv`, refetches when cache misses the range) and `fetch_etf_dividends(symbol)` |
 
 Examples from the project root:
 
@@ -93,6 +94,7 @@ conda run -n fund python -m dataload.pipeline_local --stage all
 | `permanent_portfolio_cn.ipynb` | `dataload.etf`, `strategy.permanent_portfolio`, `backtest.weights` | ETF/index data may be refreshed from network |
 | `bank_pb_strategy.ipynb` | `strategy.bank_pb` | The retained, more complete bank-PB iteration |
 | `growth_stock_strategy.ipynb` | `strategy.growth_stock` | Growth-stock experiment |
+| `dividend_bond_spread.ipynb` | `strategy.dividend_bond_spread`, `dataload.etf` | Dividend-yield/treasury spread DCA variants and benchmark |
 
 ## Tests and Reproducibility
 

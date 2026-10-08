@@ -728,7 +728,7 @@ def screen_all(D: pd.Timestamp, min_pass: int = 7,
 # 回测
 # ─────────────────────────────────────────────────────────────
 
-class GrahamBacktest:
+class GrahamStrategy:
     def __init__(self, initial_capital: float = 1_000_000.0,
                  rank_by: str = 'margin_of_safety'):
         self.initial_capital = initial_capital

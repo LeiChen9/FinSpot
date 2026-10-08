@@ -27,7 +27,7 @@ LOT = 100
 
 
 @dataclass
-class BandBacktest:
+class BandStrategy:
     """每日收盘触发的区间回测器。
 
     screener: Callable[[pd.Timestamp], Dict[str, Dict]] 返回
@@ -246,4 +246,4 @@ class BandBacktest:
         return nav
 
 
-__all__ = ['BandBacktest', 'MA_WINDOW', 'LOT', 'COMMISSION', 'STAMP_TAX', 'SLIPPAGE']
+__all__ = ['BandStrategy', 'MA_WINDOW', 'LOT', 'COMMISSION', 'STAMP_TAX', 'SLIPPAGE']

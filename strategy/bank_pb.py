@@ -130,7 +130,7 @@ def screen_top10_banks(as_of, market_data: Dict, valid_banks: Dict,
     return [c for c in top10 if c['pb'] < 0.6]
 
 
-class BankPBBacktest:
+class BankPBStrategy:
     """每日收盘触发: 换股/补仓/首次建仓。"""
 
     def __init__(self, market_data: Dict, valid_banks: Dict, financial_cache: Dict,

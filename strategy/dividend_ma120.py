@@ -63,7 +63,7 @@ class WeightRecord:
 
 
 @dataclass
-class MeanReversionBacktest:
+class MeanReversionStrategy:
     market_data: Dict[str, pd.DataFrame]
     screener: Callable[[pd.Timestamp], List[str]]          # → 候选 codes
     initial_capital: float = 500_000.0
@@ -207,9 +207,9 @@ def run_backtest(market_data: Dict[str, pd.DataFrame],
                  screener: Callable[[pd.Timestamp], List[str]],
                  start: pd.Timestamp, end: pd.Timestamp,
                  with_cost: bool = True, **kw) -> pd.DataFrame:
-    bt = MeanReversionBacktest(market_data, screener, with_cost=with_cost, **kw)
+    bt = MeanReversionStrategy(market_data, screener, with_cost=with_cost, **kw)
     return bt.run(start, end), bt
 
 
 __all__ = ['target_weight', 'ma120_lowvol_mask', 'rolling_ma120_vol',
-           'make_rebalance_dates', 'MeanReversionBacktest', 'run_backtest']
+           'make_rebalance_dates', 'MeanReversionStrategy', 'run_backtest']

@@ -19,5 +19,8 @@ secrets.*
 /tests/baseline/
 reports/generated/
 
+# Ephemeral AI/user scratch (do not commit)
+/scripts/
+
 # Notebook checkpoints
 .ipynb_checkpoints/

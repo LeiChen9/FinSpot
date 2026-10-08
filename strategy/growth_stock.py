@@ -106,7 +106,7 @@ class Trade:
     reason: str
 
 
-class GrowthStockBacktest:
+class GrowthStockStrategy:
     def __init__(self, initial_capital: float):
         self.initial_capital = initial_capital
         self.cash = initial_capital
